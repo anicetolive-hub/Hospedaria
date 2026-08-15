@@ -1,0 +1,74 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// SQLite não suporta enums nativos no Prisma; os valores válidos
+// (RoomStatus: AVAILABLE | OCCUPIED | MAINTENANCE;
+//  ReservationStatus: BOOKED | CHECKED_IN | CHECKED_OUT | CANCELLED)
+// são validados na camada de aplicação (ver src/routes/*.ts com zod).
+
+model Guest {
+  id           String        @id @default(cuid())
+  fullName     String
+  document     String // BI / Passaporte / CPF
+  phone        String?
+  email        String?
+  notes        String?
+  reservations Reservation[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model Room {
+  id     String     @id @default(cuid())
+  number String  @unique
+  name   String? // ex: "Suite Master"
+  floor  String?
+  status String  @default("AVAILABLE")
+
+  // Integração Tuya: dispositivo principal do quarto (ex: fechadura inteligente)
+  tuyaDeviceId String?
+
+  // Comandos enviados ao dispositivo Tuya no check-in, em JSON:
+  // ex: [{"code":"switch_1","value":true}] para destrancar/ligar
+  tuyaCheckinCommands String?
+
+  // Comandos enviados ao dispositivo Tuya no check-out (ex: trancar/desligar)
+  tuyaCheckoutCommands String?
+
+  reservations Reservation[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+}
+
+model Reservation {
+  id     String             @id @default(cuid())
+  guest  Guest              @relation(fields: [guestId], references: [id])
+  guestId String
+  room   Room               @relation(fields: [roomId], references: [id])
+  roomId String
+
+  checkinDate  DateTime // data prevista de check-in
+  checkoutDate DateTime // data prevista de check-out
+
+  actualCheckinAt  DateTime?
+  actualCheckoutAt DateTime?
+
+  status String  @default("BOOKED")
+  notes  String?
+
+  // Último resultado da automação Tuya (JSON), para diagnóstico no painel
+  lastAutomationResult String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([roomId])
+  @@index([guestId])
+  @@index([status])
+}
