@@ -13,6 +13,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "seed": "tsx prisma/seed.ts",
+    "seed:performance": "tsx prisma/seedPerformance.ts",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -72,3 +72,141 @@ model Reservation {
   @@index([guestId])
   @@index([status])
 }
+
+// ---------------------------------------------------------------------------
+// Módulo de Gestão de Performance (KPIs, pessoas, projetos e tarefas)
+// Valores válidos (validados com zod em src/routes/performance/*.ts):
+//  Person.role: DIRECTOR | MANAGER | COORDINATOR | STAFF
+//  Kpi.direction: HIGHER_IS_BETTER | LOWER_IS_BETTER
+//  Kpi.frequency: WEEKLY | MONTHLY | QUARTERLY | YEARLY
+//  Project.status: PLANNED | IN_PROGRESS | ON_HOLD | DONE | CANCELLED
+//  Task.status: TODO | IN_PROGRESS | BLOCKED | DONE | CANCELLED
+//  priority: LOW | MEDIUM | HIGH | CRITICAL
+// ---------------------------------------------------------------------------
+
+model Department {
+  id          String       @id @default(cuid())
+  name        String
+  code        String       @unique // ex: "DSI", "INFRA"
+  description String?
+
+  // Hierarquia: a direção é o departamento raiz; as áreas apontam para ela
+  parent      Department?  @relation("DepartmentTree", fields: [parentId], references: [id])
+  parentId    String?
+  children    Department[] @relation("DepartmentTree")
+
+  people      Person[]
+  kpis        Kpi[]
+  projects    Project[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Person {
+  id           String      @id @default(cuid())
+  fullName     String
+  email        String?
+  jobTitle     String?
+  role         String      @default("STAFF")
+  department   Department? @relation(fields: [departmentId], references: [id])
+  departmentId String?
+  active       Boolean     @default(true)
+
+  kpis         Kpi[]
+  projects     Project[]
+  tasks        Task[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([departmentId])
+}
+
+model Kpi {
+  id           String      @id @default(cuid())
+  name         String
+  description  String?
+  unit         String? // ex: "%", "h", "tickets"
+  direction    String      @default("HIGHER_IS_BETTER")
+  frequency    String      @default("MONTHLY")
+  target       Float
+  // % de atingimento abaixo do qual o KPI fica vermelho (entre este valor e 100 fica amarelo)
+  warningThreshold Float   @default(90)
+  weight       Float       @default(1)
+
+  department   Department? @relation(fields: [departmentId], references: [id])
+  departmentId String?
+  owner        Person?     @relation(fields: [ownerId], references: [id])
+  ownerId      String?
+
+  measurements KpiMeasurement[]
+  active       Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@index([departmentId])
+  @@index([ownerId])
+}
+
+model KpiMeasurement {
+  id        String   @id @default(cuid())
+  kpi       Kpi      @relation(fields: [kpiId], references: [id], onDelete: Cascade)
+  kpiId     String
+  period    String // ex: "2026-10" (mensal), "2026-Q4" (trimestral), "2026-W43" (semanal), "2026" (anual)
+  value     Float
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([kpiId, period])
+}
+
+model Project {
+  id           String      @id @default(cuid())
+  name         String
+  description  String?
+  status       String      @default("PLANNED")
+  priority     String      @default("MEDIUM")
+  startDate    DateTime
+  dueDate      DateTime
+  completedAt  DateTime?
+
+  owner        Person?     @relation(fields: [ownerId], references: [id])
+  ownerId      String?
+  department   Department? @relation(fields: [departmentId], references: [id])
+  departmentId String?
+
+  tasks        Task[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model Task {
+  id          String    @id @default(cuid())
+  title       String
+  description String?
+  status      String    @default("TODO")
+  priority    String    @default("MEDIUM")
+  progress    Int       @default(0) // 0-100
+  startDate   DateTime?
+  dueDate     DateTime
+  completedAt DateTime?
+
+  project     Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  projectId   String?
+  assignee    Person?   @relation(fields: [assigneeId], references: [id])
+  assigneeId  String?
+
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([projectId])
+  @@index([assigneeId])
+  @@index([status])
+}
+
+// Registo dos alertas já enviados por webhook (Teams/Slack), para não repetir
+// a mesma notificação a cada verificação periódica nem após reiniciar a API.
+model AlertNotification {
+  alertKey   String   @id // ex: "task-overdue:<taskId>"
+  notifiedAt DateTime @default(now())
+}

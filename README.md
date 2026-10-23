@@ -26,7 +26,11 @@ npm run seed              # opcional: cria 2 quartos e 1 hóspede de exemplo
 npm run dev                # inicia a API em http://localhost:3333
 ```
 
-Rodar os testes: `npm test` (cobre o algoritmo de assinatura da Tuya).
+Para carregar dados de exemplo do módulo de performance (uma Direção de SI
+com áreas, gestores, KPIs e projetos): `npm run seed:performance`.
+
+Rodar os testes: `npm test` (cobre o algoritmo de assinatura da Tuya e o
+motor de cálculo de performance/alertas).
 Buildar para produção: `npm run build && npm start`.
 
 ### 2. Frontend
@@ -86,3 +90,76 @@ com renovação automática, e comandos enviados via
 - **Reservation** (reserva): hóspede + quarto + datas + status
   (`BOOKED` → `CHECKED_IN` → `CHECKED_OUT`, ou `CANCELLED`) + último
   resultado da automação Tuya, para auditoria.
+
+## Módulo de Gestão de Performance
+
+Painel para a direção acompanhar a performance dos **departamentos**, dos
+**gestores e coordenadores** e da **própria direção** através de KPIs, e
+gerir **projetos e tarefas** com alertas de prazo. Fica no menu
+**Performance** do painel web.
+
+| Página | Para que serve |
+| --- | --- |
+| **Visão geral** | Nota consolidada da direção, ranking dos departamentos e dos gestores/coordenadores, e os alertas prioritários. |
+| **KPIs** | Cadastro de KPIs por departamento e responsável (meta, sentido, frequência, peso) e registo dos valores de cada período, com histórico e tendência. |
+| **Projetos e tarefas** | Projetos com progresso e situação de prazo; tarefas com responsável, prazo e progresso. Filtros "As minhas", "Abertas" e "Atrasadas / em risco". |
+| **Equipa** | Estrutura de departamentos (a direção no topo e as áreas por baixo) e pessoas com o seu nível: diretor, gestor, coordenador ou colaborador. |
+| **Alertas** | Todos os alertas ativos, com filtro por severidade e "só os meus". |
+
+No topo de todas as páginas, o seletor **"Eu sou"** indica quem está a usar
+o painel (fica guardado no navegador) e o sino mostra os alertas críticos /
+de atenção dessa pessoa.
+
+### Como as notas são calculadas
+
+- **Atingimento de um KPI** = valor ÷ meta (ou meta ÷ valor quando "menor é
+  melhor"), limitado a 120%. Verde a partir de 100%, amarelo entre o
+  *limiar crítico* do KPI e 100%, vermelho abaixo do limiar.
+- **Nota de KPIs** de uma pessoa ou departamento = média do atingimento dos
+  seus KPIs, ponderada pelo peso de cada um (usa a medição mais recente).
+- **Nota de entrega** = tarefas com prazo nos últimos 90 dias: no prazo
+  vale 100, entregue com atraso 50, em atraso (aberta e vencida) 0.
+- **Nota final** = 60% KPIs + 40% entrega (se faltar um dos lados, usa só o
+  outro). Verde ≥ 90, amarelo ≥ 70, vermelho abaixo de 70.
+- **Departamento**: nota própria = KPIs do departamento + entrega das
+  tarefas da sua equipa; **nota consolidada** = média da nota própria com a
+  consolidada de cada área subordinada. A nota consolidada do departamento
+  de topo é a nota da direção.
+
+Os pesos e faixas estão em `backend/src/services/performance/engine.ts`.
+
+### Alertas de prazos e KPIs
+
+Recalculados a cada consulta:
+
+| Alerta | Severidade |
+| --- | --- |
+| Tarefa ou projeto com prazo ultrapassado | Crítico |
+| KPI abaixo do limiar crítico | Crítico |
+| Prazo termina em `ALERT_DUE_SOON_DAYS` dias ou menos (padrão 3) | Atenção |
+| Em risco: bloqueado/em espera, ou mais de metade do prazo consumido com o progresso 25 pontos atrás do tempo | Atenção |
+| KPI abaixo da meta, mas acima do limiar | Atenção |
+| KPI sem o valor do último período encerrado | Info |
+
+Formas de receber os alertas:
+
+1. **No painel**: sino no topo e página **Alertas** (atualiza a cada 5 min).
+2. **Notificação do navegador**: em **Alertas → Ativar notificações no
+   navegador**. Com o painel aberto, cada alerta crítico novo gera uma
+   notificação.
+3. **Microsoft Teams ou Slack**: crie um *Incoming Webhook* no canal e
+   preencha `ALERT_WEBHOOK_URL` no `backend/.env`. A API verifica a cada
+   `ALERT_CHECK_INTERVAL_MINUTES` (padrão 60) e envia apenas os alertas
+   novos a partir de `ALERT_WEBHOOK_MIN_SEVERITY` (padrão `WARNING`). Cada
+   alerta é enviado uma única vez (registo na tabela `AlertNotification`).
+   Para forçar uma verificação, use o botão **Enviar novos para Teams/Slack**
+   ou `POST /api/performance/alerts/notify`.
+
+### API
+
+Todas as rotas ficam em `/api/performance`: `dashboard`, `alerts`,
+`departments`, `people`, `kpis` (+ `POST /kpis/:id/measurements` com
+`{ period, value }`; períodos `2026-10`, `2026-Q4`, `2026-W43` ou `2026`),
+`projects` e `tasks` (CRUD com GET/POST/PUT/DELETE). Ao mudar uma tarefa
+para concluída, a data de conclusão é registada automaticamente; é essa data
+que define se foi entregue no prazo.

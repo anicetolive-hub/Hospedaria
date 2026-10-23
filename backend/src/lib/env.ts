@@ -20,6 +20,16 @@ export const env = {
     clientId: process.env.TUYA_CLIENT_ID ?? "",
     clientSecret: process.env.TUYA_CLIENT_SECRET ?? "",
   },
+  performance: {
+    // Tarefas/projetos a N dias (ou menos) do prazo geram alerta "prazo a terminar"
+    dueSoonDays: Number(process.env.ALERT_DUE_SOON_DAYS ?? 3),
+    // Intervalo da verificação periódica de alertas (0 desliga)
+    checkIntervalMinutes: Number(process.env.ALERT_CHECK_INTERVAL_MINUTES ?? 60),
+    // Webhook (Microsoft Teams / Slack) que recebe os novos alertas
+    webhookUrl: process.env.ALERT_WEBHOOK_URL ?? "",
+    // Severidade mínima enviada ao webhook: CRITICAL | WARNING | INFO
+    webhookMinSeverity: (process.env.ALERT_WEBHOOK_MIN_SEVERITY ?? "WARNING").toUpperCase(),
+  },
 };
 
 export function assertTuyaConfigured(): void {
