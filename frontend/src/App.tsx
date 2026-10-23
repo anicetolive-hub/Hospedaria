@@ -1,10 +1,9 @@
 import { lazy, Suspense } from "react";
-import { Navigate, NavLink, Route, Routes } from "react-router-dom";
+import { NavLink, Route, Routes } from "react-router-dom";
 import "./App.css";
 import { AuthProvider } from "./auth/AuthContext";
 import { useAuth } from "./auth/context";
 import { LoginPage } from "./auth/LoginPage";
-import { DEMO } from "./demo/flag";
 import { Dashboard } from "./pages/Dashboard";
 import { Guests } from "./pages/Guests";
 import { Alerts } from "./pages/performance/Alerts";
@@ -46,20 +45,18 @@ function Shell() {
         </Suspense>
       )}
       <header className="app-header">
-        <h1>{DEMO ? "Performance" : "🏨 Hospedaria"}</h1>
+        <h1>🏨 Hospedaria</h1>
         <nav>
-          {!DEMO && (
-            <div className="nav-group">
-              <NavLink to="/" end>
-                Painel
-              </NavLink>
-              <NavLink to="/reservas">Reservas</NavLink>
-              <NavLink to="/quartos">Quartos</NavLink>
-              <NavLink to="/hospedes">Hóspedes</NavLink>
-            </div>
-          )}
           <div className="nav-group">
-            {!DEMO && <span className="nav-group-label">Performance</span>}
+            <NavLink to="/" end>
+              Painel
+            </NavLink>
+            <NavLink to="/reservas">Reservas</NavLink>
+            <NavLink to="/quartos">Quartos</NavLink>
+            <NavLink to="/hospedes">Hóspedes</NavLink>
+          </div>
+          <div className="nav-group">
+            <span className="nav-group-label">Performance</span>
             <NavLink to="/performance" end>
               Visão geral
             </NavLink>
@@ -74,7 +71,7 @@ function Shell() {
       </header>
       <main className="app-content">
         <Routes>
-          <Route path="/" element={DEMO ? <Navigate to="/performance" replace /> : <Dashboard />} />
+          <Route path="/" element={<Dashboard />} />
           <Route path="/reservas" element={<Reservations />} />
           <Route path="/quartos" element={<Rooms />} />
           <Route path="/hospedes" element={<Guests />} />

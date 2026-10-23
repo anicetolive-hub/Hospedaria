@@ -539,24 +539,24 @@ tr.row-detail td {
   }
 
   /* Tabelas viram cartões: cada linha um bloco, cada célula "coluna: valor" */
-  .table-scroll table,
-  .table-scroll tbody,
-  .table-scroll tr,
-  .table-scroll td {
+  .app-content table,
+  .app-content tbody,
+  .app-content tr,
+  .app-content td {
     display: block;
     width: 100%;
   }
 
-  .table-scroll thead {
+  .app-content thead {
     display: none;
   }
 
-  .table-scroll tr {
+  .app-content tr {
     padding: 0.7rem 0;
     border-bottom: 1px solid var(--border);
   }
 
-  .table-scroll td {
+  .app-content td {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -567,7 +567,7 @@ tr.row-detail td {
     text-align: right;
   }
 
-  .table-scroll td::before {
+  .app-content td::before {
     content: attr(data-label);
     flex: none;
     max-width: 45%;
@@ -580,28 +580,28 @@ tr.row-detail td {
   }
 
   /* A 1.ª coluna é o título do cartão; células sem nome de coluna ocupam a linha toda */
-  .table-scroll td:first-child,
-  .table-scroll td[data-label=""] {
+  .app-content td:first-child,
+  .app-content td[data-label=""] {
     display: block;
     text-align: left;
   }
 
-  .table-scroll td:first-child {
+  .app-content td:first-child {
     padding-bottom: 0.35rem;
     font-size: 0.98rem;
   }
 
-  .table-scroll td:first-child::before,
-  .table-scroll td[data-label=""]::before {
+  .app-content td:first-child::before,
+  .app-content td[data-label=""]::before {
     content: none;
   }
 
-  .table-scroll td > select,
-  .table-scroll td > input[type="date"] {
+  .app-content td > select,
+  .app-content td > input[type="date"] {
     max-width: 55%;
   }
 
-  .table-scroll td .progress {
+  .app-content td .progress {
     width: 120px;
   }
 }

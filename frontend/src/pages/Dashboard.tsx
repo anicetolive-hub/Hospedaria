@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import { DEMO } from "../demo/flag";
 import type { Reservation, Room } from "../types";
 
 export function Dashboard() {
@@ -52,7 +53,12 @@ export function Dashboard() {
 
       <div className="card">
         <h3 style={{ marginTop: 0 }}>Integração Tuya</h3>
-        {tuya?.connected ? (
+        {DEMO ? (
+          <p>
+            <span className="badge MAINTENANCE">Simulada</span> — na demonstração não há fechaduras reais: o check-in e o
+            check-out mostram o resultado que a automação teria.
+          </p>
+        ) : tuya?.connected ? (
           <p>
             <span className="badge OCCUPIED">Conectado</span> — a API da Tuya Cloud respondeu com sucesso.
           </p>

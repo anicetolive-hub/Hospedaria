@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
-import type { AutomationOutcome, Guest, Reservation, Room } from "../types";
+import { RESERVATION_STATUS_LABEL, type AutomationOutcome, type Guest, type Reservation, type Room } from "../types";
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -183,7 +183,7 @@ export function Reservations() {
                   <td>{new Date(r.checkinDate).toLocaleDateString("pt-PT")}</td>
                   <td>{new Date(r.checkoutDate).toLocaleDateString("pt-PT")}</td>
                   <td>
-                    <span className={`badge ${r.status}`}>{r.status}</span>
+                    <span className={`badge ${r.status}`}>{RESERVATION_STATUS_LABEL[r.status]}</span>
                   </td>
                   <td>
                     {automation ? (

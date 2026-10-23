@@ -58,3 +58,16 @@ export interface AutomationOutcome {
   error?: string;
   result?: unknown;
 }
+
+export const RESERVATION_STATUS_LABEL: Record<ReservationStatus, string> = {
+  BOOKED: "Reservada",
+  CHECKED_IN: "Hospedado",
+  CHECKED_OUT: "Saída feita",
+  CANCELLED: "Cancelada",
+};
+
+export const ROOM_STATUS_LABEL: Record<RoomStatus, string> = {
+  AVAILABLE: "Disponível",
+  OCCUPIED: "Ocupado",
+  MAINTENANCE: "Manutenção",
+};

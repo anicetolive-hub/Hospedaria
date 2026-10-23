@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../api";
-import type { Room, TuyaCommand } from "../types";
+import { ROOM_STATUS_LABEL, type Room, type TuyaCommand } from "../types";
 
 const emptyForm = {
   number: "",
@@ -149,7 +149,7 @@ export function Rooms() {
               <strong>
                 {room.number} {room.name ? `· ${room.name}` : ""}
               </strong>
-              <span className={`badge ${room.status}`}>{room.status}</span>
+              <span className={`badge ${room.status}`}>{ROOM_STATUS_LABEL[room.status]}</span>
             </div>
             <p className="tuya-tag">
               🔌 {room.tuyaDeviceId ? `Dispositivo: ${room.tuyaDeviceId}` : "Sem dispositivo Tuya vinculado"}

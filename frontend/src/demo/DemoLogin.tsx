@@ -37,10 +37,11 @@ export function DemoLogin() {
   return (
     <div className="login-screen">
       <div className="login-card">
-        <h1>Gestão de Performance</h1>
+        <h1>🏨 Hospedaria</h1>
         <p className="hint" style={{ marginTop: 0 }}>
-          Demonstração com dados de exemplo de uma Direção de Sistemas de Informação. Escolha com quem quer entrar: cada
-          perfil vê e pode alterar coisas diferentes.
+          Demonstração com dados de exemplo: gestão da hospedaria (quartos, hóspedes, reservas) e gestão de performance de
+          uma Direção de Sistemas de Informação. Escolha com quem quer entrar: na performance, cada perfil vê e pode alterar
+          coisas diferentes.
         </p>
         {error && <div className="error-banner">{error}</div>}
         <div className="demo-accounts">

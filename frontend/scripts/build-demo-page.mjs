@@ -19,7 +19,7 @@ const css = asset(/<link rel="stylesheet" crossorigin href="\.\/([^"]+)"/);
 const safeJs = js.replace(/<\/script/gi, "<\\/script");
 
 const page = `<title>Gestão de Performance</title>
-<meta name="description" content="Demonstração da ferramenta de gestão de performance, objetivos, KPIs e projetos">
+<meta name="description" content="Demonstração da Hospedaria e da gestão de performance, objetivos, KPIs e projetos">
 <style>
 ${css}
 </style>

@@ -96,12 +96,14 @@ com renovação automática, e comandos enviados via
 ## Versão de demonstração (sem servidor)
 
 `cd frontend && npm run build:demo` gera `frontend/dist-demo/demo.html`: uma
-página única com a aplicação de performance e os dados de exemplo, que corre
+página única com a aplicação completa (hospedaria e performance) e os dados de
+exemplo, que corre
 inteira no navegador (também no telemóvel). Não precisa de backend nem de base
 de dados: as chamadas à API são respondidas no próprio navegador
-(`frontend/src/demo/mockApi.ts`), com o mesmo motor de cálculo e as mesmas
-regras de acesso do backend, e as alterações ficam guardadas só nesse
-aparelho. Na entrada escolhe-se com que perfil entrar (diretor, gestor,
+(`frontend/src/demo/mockApi.ts` e `mockHotel.ts`), com o mesmo motor de
+cálculo e as mesmas regras de acesso do backend, e as alterações ficam
+guardadas só nesse aparelho. Na hospedaria, a automação Tuya é simulada (não
+há fechaduras reais). Na entrada escolhe-se com que perfil entrar (diretor, gestor,
 coordenador ou colaborador). Serve para avaliar a ferramenta; não é para uso
 real.
 

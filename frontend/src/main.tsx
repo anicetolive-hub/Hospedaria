@@ -21,7 +21,7 @@ installResponsiveTables(root)
 
 createRoot(root).render(
   <StrictMode>
-    <Router {...(DEMO ? { initialEntries: ['/performance'] } : {})}>
+    <Router>
       <App />
     </Router>
   </StrictMode>,

@@ -15,6 +15,7 @@ import { periodOf, type KpiFrequency } from "../../../backend/src/services/perfo
 import { buildSnapshot, isOpen } from "../../../backend/src/services/performance/snapshotCore";
 import { filterSnapshot } from "../../../backend/src/services/performance/visibility";
 import { ApiError } from "../api";
+import { handleHotel, resetHotelData } from "./mockHotel";
 
 type Data = ReturnType<typeof buildDemoData>;
 type PersonRow = Data["people"][number];
@@ -51,6 +52,7 @@ function save() {
 export function resetDemoData() {
   store = buildDemoData(new Date());
   save();
+  resetHotelData();
 }
 
 // ---------------------------------------------------------------------------
@@ -160,8 +162,7 @@ function handleAuth(pathname: string, method: string, body: Record<string, unkno
 
 function handleApi(url: URL, method: string, body: Record<string, unknown>, init?: RequestInit) {
   const user = currentUser(init);
-  // Páginas da hospedaria não fazem parte da demonstração
-  if (!url.pathname.startsWith("/api/performance/")) return url.pathname.includes("tuya") ? { connected: false } : [];
+  if (!url.pathname.startsWith("/api/performance/")) return handleHotel(url.pathname, method, body);
 
   const sub = url.pathname.slice("/api/performance".length);
   for (const [m, regex, handler] of routes) {
