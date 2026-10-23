@@ -16,7 +16,8 @@ export type TimingStatus =
 export type AlertSeverity = "CRITICAL" | "WARNING" | "INFO";
 
 // Peso de cada componente na nota final de uma pessoa ou departamento.
-export const SCORE_WEIGHTS = { kpi: 0.6, delivery: 0.4 };
+// Quando falta um componente (ex: sem objetivos), os restantes são reponderados.
+export const SCORE_WEIGHTS = { kpi: 0.5, objectives: 0.2, delivery: 0.3 };
 // Faixas da nota final (0-100+): >= GREEN fica verde, >= YELLOW amarelo, abaixo vermelho.
 export const SCORE_BANDS = { GREEN: 90, YELLOW: 70 };
 // Atingimento máximo considerado: evita que um KPI muito acima da meta esconda os restantes.
@@ -257,11 +258,105 @@ export function deliveryScore(tasks: ScheduleInput[], now: Date, windowDays = DE
   return count === 0 ? null : round1((points / count) * 100);
 }
 
-export function combineScores(kpiScore: number | null, delivery: number | null): number | null {
-  if (kpiScore === null && delivery === null) return null;
-  if (kpiScore === null) return delivery;
-  if (delivery === null) return kpiScore;
-  return round1(kpiScore * SCORE_WEIGHTS.kpi + delivery * SCORE_WEIGHTS.delivery);
+export function combineScores(parts: { kpi: number | null; objectives: number | null; delivery: number | null }): number | null {
+  let total = 0;
+  let weight = 0;
+  for (const key of Object.keys(SCORE_WEIGHTS) as (keyof typeof SCORE_WEIGHTS)[]) {
+    const value = parts[key];
+    if (value === null) continue;
+    total += value * SCORE_WEIGHTS[key];
+    weight += SCORE_WEIGHTS[key];
+  }
+  return weight === 0 ? null : round1(total / weight);
+}
+
+// ---------------------------------------------------------------------------
+// Objetivos (estratégicos → direção → individuais)
+// ---------------------------------------------------------------------------
+
+export interface ObjectiveInput {
+  id: string;
+  parentId: string | null;
+  status: string; // ACTIVE | ACHIEVED | CANCELLED
+  weight: number;
+  progress: number; // manual
+}
+
+export interface ObjectiveProgress {
+  progress: number;
+  source: "LINKED" | "MANUAL";
+}
+
+/**
+ * Progresso de cada objetivo: média ponderada do que está ligado a ele
+ * (atingimento dos KPIs limitado a 100%, progresso dos projetos e dos
+ * objetivos filhos não cancelados). Sem nada ligado com dados, vale o
+ * progresso manual. Objetivos alcançados valem 100%.
+ */
+export function computeObjectiveProgress(
+  objectives: ObjectiveInput[],
+  kpis: { objectiveId: string | null; attainment: number | null; weight: number }[],
+  projects: { objectiveId: string | null; progress: number; status: string }[],
+): Map<string, ObjectiveProgress> {
+  const byId = new Map(objectives.map((o) => [o.id, o]));
+  const result = new Map<string, ObjectiveProgress>();
+  const visiting = new Set<string>();
+
+  const compute = (id: string): ObjectiveProgress => {
+    const cached = result.get(id);
+    if (cached) return cached;
+    const objective = byId.get(id) as ObjectiveInput;
+    if (objective.status === "ACHIEVED") return remember(id, { progress: 100, source: "MANUAL" });
+    if (visiting.has(id)) return { progress: clamp(objective.progress, 0, 100), source: "MANUAL" }; // ciclo
+    visiting.add(id);
+
+    const items: { value: number; weight: number }[] = [];
+    for (const k of kpis) {
+      if (k.objectiveId === id && k.attainment !== null && k.weight > 0) {
+        items.push({ value: Math.min(100, k.attainment), weight: k.weight });
+      }
+    }
+    for (const p of projects) {
+      if (p.objectiveId === id && p.status !== "CANCELLED") items.push({ value: p.progress, weight: 1 });
+    }
+    for (const child of objectives) {
+      if (child.parentId === id && child.status !== "CANCELLED" && child.weight > 0) {
+        items.push({ value: compute(child.id).progress, weight: child.weight });
+      }
+    }
+
+    visiting.delete(id);
+    const totalWeight = items.reduce((sum, i) => sum + i.weight, 0);
+    if (totalWeight === 0) return remember(id, { progress: clamp(objective.progress, 0, 100), source: "MANUAL" });
+    return remember(id, {
+      progress: Math.round(items.reduce((sum, i) => sum + i.value * i.weight, 0) / totalWeight),
+      source: "LINKED",
+    });
+  };
+
+  const remember = (id: string, value: ObjectiveProgress) => {
+    result.set(id, value);
+    return value;
+  };
+
+  for (const o of objectives) compute(o.id);
+  return result;
+}
+
+/**
+ * Ritmo de um objetivo (0-100): progresso face ao tempo já decorrido.
+ * Alcançado = 100; em curso = progresso ÷ % do prazo consumido (máx. 100);
+ * nos primeiros 10% do prazo ainda não é avaliado (null).
+ */
+export function objectivePaceScore(status: string, progress: number, elapsedPct: number | null): number | null {
+  if (status === "CANCELLED") return null;
+  if (status === "ACHIEVED") return 100;
+  if (elapsedPct === null || elapsedPct < 10) return null;
+  return round1(Math.min(100, (progress / elapsedPct) * 100));
+}
+
+export function weightedScore(items: { score: number | null; weight: number }[]): number | null {
+  return weightedKpiScore(items.map((i) => ({ attainment: i.score, weight: i.weight })));
 }
 
 // ---------------------------------------------------------------------------
@@ -271,7 +366,7 @@ export function combineScores(kpiScore: number | null, delivery: number | null):
 export interface Alert {
   key: string; // estável por entidade + tipo, usado para não notificar duas vezes
   severity: AlertSeverity;
-  category: "TASK" | "PROJECT" | "KPI";
+  category: "TASK" | "PROJECT" | "KPI" | "OBJECTIVE";
   entityId: string;
   title: string;
   message: string;
@@ -289,13 +384,15 @@ export function sortAlerts(alerts: Alert[]): Alert[] {
   );
 }
 
+const SCHEDULE_LABEL = { TASK: "Tarefa", PROJECT: "Projeto", OBJECTIVE: "Objetivo" } as const;
+
 export function scheduleAlert(
-  category: "TASK" | "PROJECT",
+  category: "TASK" | "PROJECT" | "OBJECTIVE",
   entity: { id: string; name: string; progress: number; status: string },
   evaluation: ScheduleEvaluation,
   owner: { id: string; fullName: string } | null,
 ): Alert | null {
-  const label = category === "TASK" ? "Tarefa" : "Projeto";
+  const label = SCHEDULE_LABEL[category];
   const common = {
     category,
     entityId: entity.id,

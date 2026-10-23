@@ -1,10 +1,17 @@
-import { Router } from "express";
+import { Request, Router } from "express";
 import { z } from "zod";
+import { toPublicPerson } from "../lib/personSelect";
 import { prisma } from "../lib/prisma";
 import { asyncHandler } from "../middleware/asyncHandler";
+import { forbidden, requireAdmin } from "../middleware/auth";
+import { buildScope, canManageDepartment, canManagePerson, LEADER_ROLES, Scope } from "../services/auth/access";
+import { hashPassword, MIN_PASSWORD_LENGTH } from "../services/auth/password";
 import { notifyNewAlerts } from "../services/performance/alertNotifier";
 import { periodOf } from "../services/performance/engine";
-import { isOpen, loadSnapshot } from "../services/performance/snapshot";
+import { isOpen, loadSnapshot, Snapshot } from "../services/performance/snapshot";
+
+// Todas as rotas exigem login (ver index.ts). Leituras são filtradas pelo
+// âmbito do utilizador; escritas verificam a permissão sobre o registo.
 
 export const performanceRouter = Router();
 
@@ -13,21 +20,79 @@ const priorities = z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]);
 const optionalId = z.string().min(1).nullable().optional();
 const optionalText = z.string().nullable().optional();
 
+async function scopeFor(req: Request): Promise<Scope> {
+  const [departments, people] = await Promise.all([
+    prisma.department.findMany({ select: { id: true, parentId: true } }),
+    prisma.person.findMany({ select: { id: true, departmentId: true } }),
+  ]);
+  return buildScope(req.user!, departments, people);
+}
+
+/** Snapshot completo + o recorte visível para o utilizador autenticado. */
+async function visibleSnapshot(req: Request) {
+  const snap = await loadSnapshot();
+  const scope = buildScope(req.user!, snap.departments, snap.people);
+  if (scope.all) return { snap, scope };
+
+  const seesPerson = (id: string | null | undefined) => !!id && scope.personIds.has(id);
+  const seesDepartment = (id: string | null | undefined) => !!id && scope.departmentIds.has(id);
+
+  // Projetos do âmbito mostram todas as tarefas; nos restantes projetos onde a
+  // pessoa tem tarefas, vê o projeto mas só as tarefas do seu âmbito.
+  const managedProjectIds = new Set(
+    snap.projects.filter((p) => seesPerson(p.ownerId) || seesDepartment(p.departmentId)).map((p) => p.id),
+  );
+  const tasks = snap.tasks.filter(
+    (t) => seesPerson(t.assigneeId) || (t.projectId !== null && managedProjectIds.has(t.projectId)),
+  );
+  const projectIds = new Set([...managedProjectIds, ...tasks.map((t) => t.projectId).filter((id): id is string => !!id)]);
+
+  // Objetivos estratégicos são públicos para toda a organização; os de direção e
+  // individuais seguem o âmbito, mais os "pais" dos visíveis (para ver o alinhamento).
+  const objectiveIds = new Set(
+    snap.objectives
+      .filter((o) => o.level === "STRATEGIC" || seesPerson(o.ownerId) || seesDepartment(o.departmentId))
+      .map((o) => o.id),
+  );
+  const byId = new Map(snap.objectives.map((o) => [o.id, o]));
+  for (const id of [...objectiveIds]) {
+    let parentId = byId.get(id)?.parentId;
+    while (parentId && !objectiveIds.has(parentId)) {
+      objectiveIds.add(parentId);
+      parentId = byId.get(parentId)?.parentId;
+    }
+  }
+
+  const visible: Snapshot = {
+    ...snap,
+    departments: snap.departments.filter((d) => seesDepartment(d.id)),
+    people: snap.people.filter((p) => seesPerson(p.id)),
+    kpis: snap.kpis.filter((k) => seesPerson(k.ownerId) || seesDepartment(k.departmentId)),
+    projects: snap.projects.filter((p) => projectIds.has(p.id)),
+    tasks,
+    objectives: snap.objectives.filter((o) => objectiveIds.has(o.id)),
+    alerts: snap.alerts.filter((a) => seesPerson(a.ownerId)),
+  };
+  return { snap: visible, scope };
+}
+
 // ---------------------------------------------------------------------------
 // Painel e alertas
 // ---------------------------------------------------------------------------
 
 performanceRouter.get(
   "/dashboard",
-  asyncHandler(async (_req, res) => {
-    const snap = await loadSnapshot();
+  asyncHandler(async (req, res) => {
+    const { snap } = await visibleSnapshot(req);
     const leaders = snap.people.filter((p) => p.active && p.role !== "STAFF");
     const openProjects = snap.projects.filter((p) => isOpen(p.status));
 
     res.json({
       generatedAt: snap.generatedAt,
+      me: snap.people.find((p) => p.id === req.user!.id) ?? null,
       departments: snap.departments,
       leaders: [...leaders].sort((a, b) => (b.scorecard.score ?? -1) - (a.scorecard.score ?? -1)),
+      strategicObjectives: snap.objectives.filter((o) => o.level === "STRATEGIC" && o.status !== "CANCELLED"),
       kpiHealth: countBy(snap.kpis.map((k) => k.evaluation.health)),
       taskTiming: countBy(snap.tasks.filter((t) => isOpen(t.status)).map((t) => t.schedule.timing)),
       projects: {
@@ -43,22 +108,21 @@ performanceRouter.get(
 performanceRouter.get(
   "/alerts",
   asyncHandler(async (req, res) => {
-    const { alerts } = await loadSnapshot();
-    const ownerId = typeof req.query.ownerId === "string" ? req.query.ownerId : undefined;
-    res.json(ownerId ? alerts.filter((a) => a.ownerId === ownerId) : alerts);
+    res.json((await visibleSnapshot(req)).snap.alerts);
   }),
 );
 
 // Dispara manualmente o envio dos alertas novos ao webhook (Teams/Slack)
 performanceRouter.post(
   "/alerts/notify",
+  requireAdmin,
   asyncHandler(async (_req, res) => {
     res.json(await notifyNewAlerts());
   }),
 );
 
 // ---------------------------------------------------------------------------
-// Departamentos
+// Departamentos (só administradores alteram)
 // ---------------------------------------------------------------------------
 
 const departmentSchema = z.object({
@@ -70,13 +134,14 @@ const departmentSchema = z.object({
 
 performanceRouter.get(
   "/departments",
-  asyncHandler(async (_req, res) => {
-    res.json((await loadSnapshot()).departments);
+  asyncHandler(async (req, res) => {
+    res.json((await visibleSnapshot(req)).snap.departments);
   }),
 );
 
 performanceRouter.post(
   "/departments",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const data = departmentSchema.parse(req.body);
     res.status(201).json(await prisma.department.create({ data: { ...data, code: data.code.toUpperCase() } }));
@@ -85,6 +150,7 @@ performanceRouter.post(
 
 performanceRouter.put(
   "/departments/:id",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const data = departmentSchema.partial().parse(req.body);
     if (data.parentId && data.parentId === req.params.id) {
@@ -101,17 +167,19 @@ performanceRouter.put(
 
 performanceRouter.delete(
   "/departments/:id",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const id = req.params.id;
-    const [people, kpis, projects, children] = await Promise.all([
+    const [people, kpis, projects, objectives, children] = await Promise.all([
       prisma.person.count({ where: { departmentId: id } }),
       prisma.kpi.count({ where: { departmentId: id } }),
       prisma.project.count({ where: { departmentId: id } }),
+      prisma.objective.count({ where: { departmentId: id } }),
       prisma.department.count({ where: { parentId: id } }),
     ]);
-    if (people + kpis + projects + children > 0) {
+    if (people + kpis + projects + objectives + children > 0) {
       return res.status(409).json({
-        error: "Departamento possui pessoas, KPIs, projetos ou áreas subordinadas; mova-os antes de remover",
+        error: "Departamento possui pessoas, KPIs, projetos, objetivos ou áreas subordinadas; mova-os antes de remover",
       });
     }
     await prisma.department.delete({ where: { id } });
@@ -120,50 +188,88 @@ performanceRouter.delete(
 );
 
 // ---------------------------------------------------------------------------
-// Pessoas (direção, gestores, coordenadores e equipa)
+// Pessoas e acessos (só administradores alteram)
 // ---------------------------------------------------------------------------
 
 const personSchema = z.object({
   fullName: z.string().min(2),
-  email: z.string().email().nullable().optional().or(z.literal("")),
+  email: z
+    .string()
+    .email()
+    .transform((e) => e.trim().toLowerCase())
+    .nullable()
+    .optional()
+    .or(z.literal("").transform(() => null)),
   jobTitle: optionalText,
   role: roles.default("STAFF"),
   departmentId: optionalId,
   active: z.boolean().optional(),
+  isAdmin: z.boolean().optional(),
+  // Password inicial ou redefinição pelo administrador
+  password: z.string().min(MIN_PASSWORD_LENGTH, `A password deve ter pelo menos ${MIN_PASSWORD_LENGTH} caracteres`).optional(),
 });
+
+/** Troca a password em texto pelo hash a guardar. */
+async function personData<T extends { password?: string }>(data: T): Promise<Omit<T, "password"> & { passwordHash?: string }> {
+  const { password, ...rest } = data;
+  return { ...rest, ...(password ? { passwordHash: await hashPassword(password) } : {}) };
+}
 
 performanceRouter.get(
   "/people",
-  asyncHandler(async (_req, res) => {
-    res.json((await loadSnapshot()).people);
+  asyncHandler(async (req, res) => {
+    res.json((await visibleSnapshot(req)).snap.people);
   }),
 );
 
 performanceRouter.post(
   "/people",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const data = personSchema.parse(req.body);
-    res.status(201).json(await prisma.person.create({ data }));
+    if (data.password && !data.email) {
+      return res.status(400).json({ error: "Para ter acesso, a pessoa precisa de um email" });
+    }
+    res.status(201).json(toPublicPerson(await prisma.person.create({ data: await personData(data) })));
   }),
 );
 
 performanceRouter.put(
   "/people/:id",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const data = personSchema.partial().parse(req.body);
-    res.json(await prisma.person.update({ where: { id: req.params.id }, data }));
+    const id = req.params.id;
+    if (id === req.user!.id && (data.isAdmin === false || data.active === false)) {
+      return res.status(400).json({ error: "Não pode retirar o seu próprio acesso de administrador" });
+    }
+    if (data.password) {
+      const current = await prisma.person.findUniqueOrThrow({ where: { id } });
+      if (!(data.email ?? current.email)) {
+        return res.status(400).json({ error: "Para ter acesso, a pessoa precisa de um email" });
+      }
+    }
+    const person = await prisma.person.update({ where: { id }, data: await personData(data) });
+    // Password redefinida ou acesso desativado: termina as sessões abertas dessa pessoa
+    if (data.password || data.active === false) {
+      await prisma.session.deleteMany({ where: { personId: id, ...(id === req.user!.id ? { id: { not: req.sessionId } } : {}) } });
+    }
+    res.json(toPublicPerson(person));
   }),
 );
 
 performanceRouter.delete(
   "/people/:id",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const id = req.params.id;
-    // Mantém KPIs, projetos e tarefas, apenas sem responsável
+    if (id === req.user!.id) return res.status(400).json({ error: "Não pode remover a sua própria conta" });
+    // Mantém KPIs, projetos, tarefas e objetivos, apenas sem responsável
     await prisma.$transaction([
       prisma.kpi.updateMany({ where: { ownerId: id }, data: { ownerId: null } }),
       prisma.project.updateMany({ where: { ownerId: id }, data: { ownerId: null } }),
       prisma.task.updateMany({ where: { assigneeId: id }, data: { assigneeId: null } }),
+      prisma.objective.updateMany({ where: { ownerId: id }, data: { ownerId: null } }),
       prisma.person.delete({ where: { id } }),
     ]);
     res.status(204).send();
@@ -171,7 +277,7 @@ performanceRouter.delete(
 );
 
 // ---------------------------------------------------------------------------
-// KPIs e medições
+// KPIs (administradores definem; responsáveis e chefias registam valores)
 // ---------------------------------------------------------------------------
 
 const kpiSchema = z.object({
@@ -185,6 +291,7 @@ const kpiSchema = z.object({
   weight: z.coerce.number().positive().default(1),
   departmentId: optionalId,
   ownerId: optionalId,
+  objectiveId: optionalId,
   active: z.boolean().optional(),
 });
 
@@ -199,13 +306,14 @@ const measurementSchema = z.object({
 
 performanceRouter.get(
   "/kpis",
-  asyncHandler(async (_req, res) => {
-    res.json((await loadSnapshot()).kpis);
+  asyncHandler(async (req, res) => {
+    res.json((await visibleSnapshot(req)).snap.kpis);
   }),
 );
 
 performanceRouter.post(
   "/kpis",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const data = kpiSchema.parse(req.body);
     res.status(201).json(await prisma.kpi.create({ data }));
@@ -214,6 +322,7 @@ performanceRouter.post(
 
 performanceRouter.put(
   "/kpis/:id",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     const data = kpiSchema.partial().parse(req.body);
     res.json(await prisma.kpi.update({ where: { id: req.params.id }, data }));
@@ -222,11 +331,19 @@ performanceRouter.put(
 
 performanceRouter.delete(
   "/kpis/:id",
+  requireAdmin,
   asyncHandler(async (req, res) => {
     await prisma.kpi.delete({ where: { id: req.params.id } });
     res.status(204).send();
   }),
 );
+
+async function assertCanMeasure(req: Request, kpi: { ownerId: string | null; departmentId: string | null }) {
+  const scope = await scopeFor(req);
+  if (!canManagePerson(scope, kpi.ownerId) && !(LEADER_ROLES.has(req.user!.role) && canManageDepartment(scope, kpi.departmentId))) {
+    throw forbidden("Só o responsável do KPI, a sua chefia ou um administrador podem registar valores");
+  }
+}
 
 // Regista (ou corrige) o valor de um período; sem período usa o período atual
 performanceRouter.post(
@@ -234,6 +351,7 @@ performanceRouter.post(
   asyncHandler(async (req, res) => {
     const kpi = await prisma.kpi.findUnique({ where: { id: req.params.id } });
     if (!kpi) return res.status(404).json({ error: "KPI não encontrado" });
+    await assertCanMeasure(req, kpi);
 
     const data = measurementSchema.parse(req.body);
     const period = data.period ?? periodOf(kpi.frequency as Parameters<typeof periodOf>[0], new Date());
@@ -253,13 +371,131 @@ performanceRouter.post(
 performanceRouter.delete(
   "/kpis/:id/measurements/:measurementId",
   asyncHandler(async (req, res) => {
+    const kpi = await prisma.kpi.findUnique({ where: { id: req.params.id } });
+    if (!kpi) return res.status(404).json({ error: "KPI não encontrado" });
+    await assertCanMeasure(req, kpi);
     await prisma.kpiMeasurement.delete({ where: { id: req.params.measurementId, kpiId: req.params.id } });
     res.status(204).send();
   }),
 );
 
 // ---------------------------------------------------------------------------
-// Projetos
+// Objetivos: estratégicos (administradores), de direção (chefias do
+// departamento) e individuais (a própria pessoa e as suas chefias)
+// ---------------------------------------------------------------------------
+
+const objectiveLevels = z.enum(["STRATEGIC", "DIRECTION", "INDIVIDUAL"]);
+const objectiveSchema = z.object({
+  title: z.string().min(2),
+  description: optionalText,
+  level: objectiveLevels,
+  status: z.enum(["ACTIVE", "ACHIEVED", "CANCELLED"]).default("ACTIVE"),
+  weight: z.coerce.number().positive().default(1),
+  progress: z.coerce.number().int().min(0).max(100).default(0),
+  startDate: z.coerce.date(),
+  dueDate: z.coerce.date(),
+  parentId: optionalId,
+  departmentId: optionalId,
+  ownerId: optionalId,
+});
+
+const PARENT_LEVEL: Record<string, string | null> = { STRATEGIC: null, DIRECTION: "STRATEGIC", INDIVIDUAL: "DIRECTION" };
+const LEVEL_LABEL: Record<string, string> = { STRATEGIC: "estratégico", DIRECTION: "de direção", INDIVIDUAL: "individual" };
+
+type ObjectiveFields = { level: string; departmentId?: string | null; ownerId?: string | null; parentId?: string | null };
+
+async function assertCanManageObjective(req: Request, o: ObjectiveFields) {
+  if (req.user!.isAdmin) return;
+  const scope = await scopeFor(req);
+  const leader = LEADER_ROLES.has(req.user!.role);
+  const allowed =
+    o.level === "DIRECTION"
+      ? leader && canManageDepartment(scope, o.departmentId)
+      : o.level === "INDIVIDUAL"
+        ? canManagePerson(scope, o.ownerId)
+        : false;
+  if (!allowed) {
+    throw forbidden(
+      o.level === "STRATEGIC"
+        ? "Só administradores definem objetivos estratégicos"
+        : o.level === "DIRECTION"
+          ? "Só as chefias do departamento ou um administrador gerem objetivos de direção"
+          : "Só a própria pessoa, as suas chefias ou um administrador gerem objetivos individuais",
+    );
+  }
+}
+
+async function validateObjective(o: ObjectiveFields & { startDate: Date; dueDate: Date }, id?: string) {
+  const fail = (message: string) => Object.assign(new Error(message), { status: 400 });
+  if (o.dueDate < o.startDate) throw fail("O prazo deve ser igual ou posterior à data de início");
+  if (o.level === "DIRECTION" && !o.departmentId) throw fail("Um objetivo de direção precisa de um departamento");
+  if (o.level === "INDIVIDUAL" && !o.ownerId) throw fail("Um objetivo individual precisa de um responsável");
+  if (o.parentId) {
+    if (o.parentId === id) throw fail("Um objetivo não pode contribuir para si próprio");
+    const parent = await prisma.objective.findUnique({ where: { id: o.parentId } });
+    if (!parent) throw fail("Objetivo superior não encontrado");
+    if (parent.level !== PARENT_LEVEL[o.level]) {
+      throw fail(
+        o.level === "STRATEGIC"
+          ? "Objetivos estratégicos são o topo e não têm objetivo superior"
+          : `Um objetivo ${LEVEL_LABEL[o.level]} deve contribuir para um objetivo ${LEVEL_LABEL[PARENT_LEVEL[o.level] as string]}`,
+      );
+    }
+  }
+}
+
+performanceRouter.get(
+  "/objectives",
+  asyncHandler(async (req, res) => {
+    res.json((await visibleSnapshot(req)).snap.objectives);
+  }),
+);
+
+performanceRouter.post(
+  "/objectives",
+  asyncHandler(async (req, res) => {
+    const data = objectiveSchema.parse(req.body);
+    await assertCanManageObjective(req, data);
+    await validateObjective(data);
+    res.status(201).json(
+      await prisma.objective.create({ data: { ...data, achievedAt: data.status === "ACHIEVED" ? new Date() : null } }),
+    );
+  }),
+);
+
+performanceRouter.put(
+  "/objectives/:id",
+  asyncHandler(async (req, res) => {
+    const data = objectiveSchema.partial().parse(req.body);
+    const current = await prisma.objective.findUnique({ where: { id: req.params.id } });
+    if (!current) return res.status(404).json({ error: "Objetivo não encontrado" });
+
+    const merged = { ...current, ...data };
+    // Precisa de permissão sobre o objetivo atual e sobre o resultado (ex: ao mudar o responsável)
+    await assertCanManageObjective(req, current);
+    await assertCanManageObjective(req, merged);
+    await validateObjective(merged, current.id);
+
+    const achievedAt =
+      data.status === undefined ? undefined : data.status === "ACHIEVED" ? (current.achievedAt ?? new Date()) : null;
+    res.json(await prisma.objective.update({ where: { id: current.id }, data: { ...data, achievedAt } }));
+  }),
+);
+
+performanceRouter.delete(
+  "/objectives/:id",
+  asyncHandler(async (req, res) => {
+    const current = await prisma.objective.findUnique({ where: { id: req.params.id } });
+    if (!current) return res.status(404).json({ error: "Objetivo não encontrado" });
+    await assertCanManageObjective(req, current);
+    // KPIs, projetos e objetivos filhos ficam desligados (onDelete: SetNull)
+    await prisma.objective.delete({ where: { id: current.id } });
+    res.status(204).send();
+  }),
+);
+
+// ---------------------------------------------------------------------------
+// Projetos (chefias criam; o responsável ou um administrador alteram)
 // ---------------------------------------------------------------------------
 
 const projectSchema = z.object({
@@ -271,19 +507,31 @@ const projectSchema = z.object({
   dueDate: z.coerce.date(),
   ownerId: optionalId,
   departmentId: optionalId,
+  objectiveId: optionalId,
 });
+
+async function assertCanManageProject(req: Request, project: { ownerId?: string | null; departmentId?: string | null }) {
+  if (req.user!.isAdmin) return;
+  const scope = await scopeFor(req);
+  const leader = LEADER_ROLES.has(req.user!.role);
+  if (project.ownerId === req.user!.id) return;
+  if (leader && (canManagePerson(scope, project.ownerId) || canManageDepartment(scope, project.departmentId))) return;
+  throw forbidden("Só o responsável do projeto, as suas chefias ou um administrador podem alterá-lo");
+}
 
 performanceRouter.get(
   "/projects",
-  asyncHandler(async (_req, res) => {
-    res.json((await loadSnapshot()).projects);
+  asyncHandler(async (req, res) => {
+    res.json((await visibleSnapshot(req)).snap.projects);
   }),
 );
 
 performanceRouter.post(
   "/projects",
   asyncHandler(async (req, res) => {
+    if (!req.user!.isAdmin && !LEADER_ROLES.has(req.user!.role)) throw forbidden("Só chefias ou administradores criam projetos");
     const data = projectSchema.parse(req.body);
+    await assertCanManageProject(req, data);
     if (data.dueDate < data.startDate) {
       return res.status(400).json({ error: "O prazo deve ser igual ou posterior à data de início" });
     }
@@ -297,6 +545,8 @@ performanceRouter.put(
     const data = projectSchema.partial().parse(req.body);
     const current = await prisma.project.findUnique({ where: { id: req.params.id } });
     if (!current) return res.status(404).json({ error: "Projeto não encontrado" });
+    await assertCanManageProject(req, current);
+    await assertCanManageProject(req, { ...current, ...data });
     if ((data.dueDate ?? current.dueDate) < (data.startDate ?? current.startDate)) {
       return res.status(400).json({ error: "O prazo deve ser igual ou posterior à data de início" });
     }
@@ -312,13 +562,16 @@ performanceRouter.put(
 performanceRouter.delete(
   "/projects/:id",
   asyncHandler(async (req, res) => {
+    const current = await prisma.project.findUnique({ where: { id: req.params.id } });
+    if (!current) return res.status(404).json({ error: "Projeto não encontrado" });
+    await assertCanManageProject(req, current);
     await prisma.project.delete({ where: { id: req.params.id } });
     res.status(204).send();
   }),
 );
 
 // ---------------------------------------------------------------------------
-// Tarefas
+// Tarefas (o responsável, as suas chefias, o dono do projeto ou um administrador)
 // ---------------------------------------------------------------------------
 
 const taskSchema = z.object({
@@ -333,11 +586,23 @@ const taskSchema = z.object({
   assigneeId: optionalId,
 });
 
+async function assertCanManageTask(req: Request, task: { assigneeId?: string | null; projectId?: string | null }) {
+  if (req.user!.isAdmin) return;
+  const scope = await scopeFor(req);
+  // Tarefa sem responsável: só quem gere o projeto (ou um administrador)
+  if (task.assigneeId && canManagePerson(scope, task.assigneeId)) return;
+  if (task.projectId) {
+    const project = await prisma.project.findUnique({ where: { id: task.projectId } });
+    if (project?.ownerId === req.user!.id) return;
+  }
+  throw forbidden("Só o responsável da tarefa, as suas chefias, o dono do projeto ou um administrador podem alterá-la");
+}
+
 performanceRouter.get(
   "/tasks",
   asyncHandler(async (req, res) => {
     const { assigneeId, projectId } = req.query;
-    const { tasks } = await loadSnapshot();
+    const { tasks } = (await visibleSnapshot(req)).snap;
     res.json(
       tasks.filter(
         (t) =>
@@ -352,6 +617,7 @@ performanceRouter.post(
   "/tasks",
   asyncHandler(async (req, res) => {
     const data = taskSchema.parse(req.body);
+    await assertCanManageTask(req, data);
     res.status(201).json(await prisma.task.create({ data: { ...data, ...completion(data.status), ...doneProgress(data.status) } }));
   }),
 );
@@ -362,6 +628,8 @@ performanceRouter.put(
     const data = taskSchema.partial().parse(req.body);
     const current = await prisma.task.findUnique({ where: { id: req.params.id } });
     if (!current) return res.status(404).json({ error: "Tarefa não encontrada" });
+    await assertCanManageTask(req, current);
+    await assertCanManageTask(req, { ...current, ...data });
     res.json(
       await prisma.task.update({
         where: { id: req.params.id },
@@ -377,6 +645,9 @@ performanceRouter.put(
 performanceRouter.delete(
   "/tasks/:id",
   asyncHandler(async (req, res) => {
+    const current = await prisma.task.findUnique({ where: { id: req.params.id } });
+    if (!current) return res.status(404).json({ error: "Tarefa não encontrada" });
+    await assertCanManageTask(req, current);
     await prisma.task.delete({ where: { id: req.params.id } });
     res.status(204).send();
   }),

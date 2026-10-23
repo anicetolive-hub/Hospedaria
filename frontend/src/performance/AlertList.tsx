@@ -1,7 +1,7 @@
 import { formatDate } from "./labels";
 import type { Alert } from "./types";
 
-const CATEGORY_LABEL = { TASK: "Tarefa", PROJECT: "Projeto", KPI: "KPI" } as const;
+const CATEGORY_LABEL = { TASK: "Tarefa", PROJECT: "Projeto", KPI: "KPI", OBJECTIVE: "Objetivo" } as const;
 const SEVERITY_LABEL = { CRITICAL: "Crítico", WARNING: "Atenção", INFO: "Info" } as const;
 const SEVERITY_HEALTH = { CRITICAL: "RED", WARNING: "YELLOW", INFO: "NO_DATA" } as const;
 

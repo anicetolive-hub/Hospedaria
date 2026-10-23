@@ -1,7 +1,9 @@
 import cors from "cors";
 import express from "express";
 import { env } from "./lib/env";
+import { requireAuth } from "./middleware/auth";
 import { errorHandler } from "./middleware/errorHandler";
+import { authRouter } from "./routes/auth";
 import { guestsRouter } from "./routes/guests";
 import { performanceRouter } from "./routes/performance";
 import { reservationsRouter } from "./routes/reservations";
@@ -16,6 +18,10 @@ app.use(express.json());
 
 app.get("/health", (_req, res) => res.json({ ok: true }));
 
+app.use("/api/auth", authRouter);
+
+// Todas as outras rotas da API exigem login
+app.use("/api", requireAuth);
 app.use("/api/guests", guestsRouter);
 app.use("/api/rooms", roomsRouter);
 app.use("/api/reservations", reservationsRouter);

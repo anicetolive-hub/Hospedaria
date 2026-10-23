@@ -1,10 +1,16 @@
 import { PrismaClient } from "@prisma/client";
+import { hashPassword } from "../src/services/auth/password";
 
 // Dados de exemplo do módulo de performance: uma Direção de Sistemas de
 // Informação com três áreas, os respetivos gestores/coordenadores, KPIs com
 // histórico e projetos/tarefas em várias situações de prazo. As datas são
 // relativas a hoje, para os alertas aparecerem logo ao abrir o painel.
 // Só cria dados quando o módulo ainda está vazio.
+//
+// Todas as pessoas de exemplo recebem a password DEMO_PASSWORD (troque-a no
+// primeiro acesso em "Alterar password"); o diretor é administrador.
+
+const DEMO_PASSWORD = process.env.SEED_PASSWORD ?? "Mudar@2026";
 
 const prisma = new PrismaClient();
 
@@ -36,15 +42,51 @@ async function main() {
     prisma.department.create({ data: { name: "Suporte ao Utilizador (Service Desk)", code: "SD", parentId: dsi.id } }),
   ]);
 
-  const person = (fullName: string, jobTitle: string, role: string, departmentId: string) =>
-    prisma.person.create({ data: { fullName, jobTitle, role, departmentId } });
+  const passwordHash = await hashPassword(DEMO_PASSWORD);
+  const person = (fullName: string, email: string, jobTitle: string, role: string, departmentId: string, isAdmin = false) =>
+    prisma.person.create({ data: { fullName, email, jobTitle, role, departmentId, isAdmin, passwordHash } });
 
-  const diretor = await person("Diretor de SI", "Diretor de Sistemas de Informação", "DIRECTOR", dsi.id);
-  const gInfra = await person("Gestor de Infraestrutura", "Gestor", "MANAGER", infra.id);
-  const cRedes = await person("Coordenador de Redes", "Coordenador", "COORDINATOR", infra.id);
-  const gDev = await person("Gestor de Desenvolvimento", "Gestor", "MANAGER", dev.id);
-  const cSd = await person("Coordenador do Service Desk", "Coordenador", "COORDINATOR", suporte.id);
-  const tecnico = await person("Técnico de Suporte", "Técnico", "STAFF", suporte.id);
+  const diretor = await person("Diretor de SI", "diretor.si@exemplo.ao", "Diretor de Sistemas de Informação", "DIRECTOR", dsi.id, true);
+  const gInfra = await person("Gestor de Infraestrutura", "gestor.infra@exemplo.ao", "Gestor", "MANAGER", infra.id);
+  const cRedes = await person("Coordenador de Redes", "coord.redes@exemplo.ao", "Coordenador", "COORDINATOR", infra.id);
+  const gDev = await person("Gestor de Desenvolvimento", "gestor.dev@exemplo.ao", "Gestor", "MANAGER", dev.id);
+  const cSd = await person("Coordenador do Service Desk", "coord.sd@exemplo.ao", "Coordenador", "COORDINATOR", suporte.id);
+  const tecnico = await person("Técnico de Suporte", "tecnico.sd@exemplo.ao", "Técnico", "STAFF", suporte.id);
+
+  // Objetivos em cascata: estratégico → direção → individual
+  const objective = (data: {
+    title: string;
+    level: string;
+    parentId?: string;
+    departmentId?: string;
+    ownerId?: string;
+    progress?: number;
+    weight?: number;
+    startDate: Date;
+    dueDate: Date;
+  }) => prisma.objective.create({ data });
+  const yearStart = new Date(Date.UTC(today.getUTCFullYear(), 0, 1));
+  const yearEnd = new Date(Date.UTC(today.getUTCFullYear(), 11, 31));
+
+  const oDigital = await objective({ title: "Acelerar a transformação digital da organização", level: "STRATEGIC", ownerId: diretor.id, startDate: yearStart, dueDate: yearEnd });
+  const oServico = await objective({ title: "Garantir serviços de TI fiáveis e seguros", level: "STRATEGIC", ownerId: diretor.id, startDate: yearStart, dueDate: yearEnd });
+
+  const oCloud = await objective({ title: "Migrar os sistemas core para a cloud", level: "DIRECTION", parentId: oDigital.id, departmentId: dev.id, ownerId: gDev.id, startDate: yearStart, dueDate: yearEnd, weight: 2 });
+  const oPlano = await objective({ title: "Aprovar o plano estratégico de SI 2027", level: "DIRECTION", parentId: oDigital.id, departmentId: dsi.id, ownerId: diretor.id, startDate: yearStart, dueDate: yearEnd });
+  const oSeguranca = await objective({ title: "Reforçar a segurança perimetral", level: "DIRECTION", parentId: oServico.id, departmentId: infra.id, ownerId: gInfra.id, startDate: yearStart, dueDate: inDays(10) });
+  const oSla = await objective({ title: "Cumprir o SLA de suporte aos utilizadores", level: "DIRECTION", parentId: oServico.id, departmentId: suporte.id, ownerId: cSd.id, startDate: yearStart, dueDate: yearEnd });
+
+  await objective({ title: "Certificação AWS Solutions Architect", level: "INDIVIDUAL", parentId: oCloud.id, ownerId: gDev.id, progress: 60, startDate: yearStart, dueDate: yearEnd });
+  await objective({ title: "Documentar a arquitetura de rede e VPNs", level: "INDIVIDUAL", parentId: oSeguranca.id, ownerId: cRedes.id, progress: 20, startDate: yearStart, dueDate: inDays(20) });
+  await objective({ title: "Reduzir tickets reabertos para menos de 5%", level: "INDIVIDUAL", parentId: oSla.id, ownerId: cSd.id, progress: 70, startDate: yearStart, dueDate: yearEnd });
+  await objective({ title: "Formação ITIL Foundation", level: "INDIVIDUAL", parentId: oSla.id, ownerId: tecnico.id, progress: 100, startDate: yearStart, dueDate: yearEnd });
+  const objectiveFor: Record<string, string> = {
+    "Projetos entregues no prazo": oPlano.id,
+    "Disponibilidade dos sistemas críticos": oServico.id,
+    "Incidentes de segurança graves": oSeguranca.id,
+    "Tickets resolvidos dentro do SLA": oSla.id,
+    "Tempo médio de resolução": oSla.id,
+  };
 
   const months = lastMonths(4);
   const kpi = async (
@@ -60,7 +102,7 @@ async function main() {
     },
     values: number[],
   ) => {
-    const created = await prisma.kpi.create({ data });
+    const created = await prisma.kpi.create({ data: { ...data, objectiveId: objectiveFor[data.name] } });
     await prisma.kpiMeasurement.createMany({
       data: values.map((value, i) => ({ kpiId: created.id, period: months[months.length - values.length + i], value })),
     });
@@ -78,13 +120,13 @@ async function main() {
   await kpi({ name: "Satisfação dos utilizadores", unit: "/5", target: 4.2, departmentId: suporte.id, ownerId: cSd.id }, [4.0, 4.3]);
 
   const erp = await prisma.project.create({
-    data: { name: "Migração do ERP para a cloud", status: "IN_PROGRESS", priority: "HIGH", startDate: inDays(-60), dueDate: inDays(30), ownerId: gDev.id, departmentId: dev.id },
+    data: { name: "Migração do ERP para a cloud", status: "IN_PROGRESS", priority: "HIGH", startDate: inDays(-60), dueDate: inDays(30), ownerId: gDev.id, departmentId: dev.id, objectiveId: oCloud.id },
   });
   const firewall = await prisma.project.create({
-    data: { name: "Renovação dos firewalls", status: "IN_PROGRESS", priority: "CRITICAL", startDate: inDays(-45), dueDate: inDays(-2), ownerId: gInfra.id, departmentId: infra.id },
+    data: { name: "Renovação dos firewalls", status: "IN_PROGRESS", priority: "CRITICAL", startDate: inDays(-45), dueDate: inDays(-2), ownerId: gInfra.id, departmentId: infra.id, objectiveId: oSeguranca.id },
   });
   const plano = await prisma.project.create({
-    data: { name: "Plano estratégico de SI 2027", status: "IN_PROGRESS", priority: "HIGH", startDate: inDays(-20), dueDate: inDays(40), ownerId: diretor.id, departmentId: dsi.id },
+    data: { name: "Plano estratégico de SI 2027", status: "IN_PROGRESS", priority: "HIGH", startDate: inDays(-20), dueDate: inDays(40), ownerId: diretor.id, departmentId: dsi.id, objectiveId: oPlano.id },
   });
 
   const task = (data: {
@@ -119,6 +161,7 @@ async function main() {
   await task({ title: "Relatório mensal de SLA", assigneeId: cSd.id, dueDate: inDays(-15), status: "DONE", progress: 100, completedAt: inDays(-16) });
 
   console.log("Dados de exemplo do módulo de performance criados.");
+  console.log(`Login de administrador: ${diretor.email} / ${DEMO_PASSWORD} (as outras pessoas usam a mesma password)`);
 }
 
 main()

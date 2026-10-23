@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError } from "../../api";
+import { useAuth } from "../../auth/context";
 import { perfApi, type ProjectInput, type TaskInput } from "../../performance/api";
 import { HealthBadge, ProgressBar, TimingBadge } from "../../performance/components";
 import { notifyDataChanged, useCurrentPersonId } from "../../performance/hooks";
@@ -12,7 +13,16 @@ import {
   TIMING_HEALTH,
   toDateInput,
 } from "../../performance/labels";
-import type { Department, Person, Priority, Project, ProjectStatus, Task, TaskStatus } from "../../performance/types";
+import type {
+  Department,
+  Objective,
+  Person,
+  Priority,
+  Project,
+  ProjectStatus,
+  Task,
+  TaskStatus,
+} from "../../performance/types";
 
 const today = () => new Date().toISOString().slice(0, 10);
 const plusDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
@@ -26,6 +36,7 @@ const emptyProject = {
   dueDate: plusDays(30),
   ownerId: "",
   departmentId: "",
+  objectiveId: "",
 };
 
 const emptyTask = {
@@ -40,7 +51,10 @@ const emptyTask = {
 type TaskFilter = "OPEN" | "MINE" | "LATE" | "ALL";
 
 export function ProjectsTasks() {
+  const { user } = useAuth();
+  const canCreateProject = !!user && (user.isAdmin || user.role !== "STAFF");
   const [projects, setProjects] = useState<Project[]>([]);
+  const [objectives, setObjectives] = useState<Objective[]>([]);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -63,6 +77,7 @@ export function ProjectsTasks() {
     reload();
     perfApi.people.list().then(setPeople);
     perfApi.departments.list().then(setDepartments);
+    perfApi.objectives.list().then(setObjectives);
   }, [reload]);
 
   async function run(action: () => Promise<unknown>, fallback: string) {
@@ -84,6 +99,7 @@ export function ProjectsTasks() {
       ...projectForm,
       ownerId: projectForm.ownerId || null,
       departmentId: projectForm.departmentId || null,
+      objectiveId: projectForm.objectiveId || null,
     };
     if (await run(() => perfApi.projects.create(data), "Erro ao criar projeto")) {
       setProjectForm(emptyProject);
@@ -132,9 +148,11 @@ export function ProjectsTasks() {
     <div>
       <div className="page-header">
         <h2>Projetos e tarefas</h2>
-        <button className="btn" onClick={() => setShowProjectForm((v) => !v)}>
-          {showProjectForm ? "Fechar" : "Novo projeto"}
-        </button>
+        {canCreateProject && (
+          <button className="btn" onClick={() => setShowProjectForm((v) => !v)}>
+            {showProjectForm ? "Fechar" : "Novo projeto"}
+          </button>
+        )}
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -144,15 +162,26 @@ export function ProjectsTasks() {
           <div className="form-grid">
             <label className="form-field">
               Nome do projeto
-              <input required value={projectForm.name} onChange={(e) => setProjectForm({ ...projectForm, name: e.target.value })} />
+              <input
+                required
+                value={projectForm.name}
+                onChange={(e) => setProjectForm({ ...projectForm, name: e.target.value })}
+              />
             </label>
             <label className="form-field">
               Responsável
-              <PersonSelect people={people} value={projectForm.ownerId} onChange={(ownerId) => setProjectForm({ ...projectForm, ownerId })} />
+              <PersonSelect
+                people={people}
+                value={projectForm.ownerId}
+                onChange={(ownerId) => setProjectForm({ ...projectForm, ownerId })}
+              />
             </label>
             <label className="form-field">
               Departamento
-              <select value={projectForm.departmentId} onChange={(e) => setProjectForm({ ...projectForm, departmentId: e.target.value })}>
+              <select
+                value={projectForm.departmentId}
+                onChange={(e) => setProjectForm({ ...projectForm, departmentId: e.target.value })}
+              >
                 <option value="">—</option>
                 {departments.map((d) => (
                   <option key={d.id} value={d.id}>
@@ -162,21 +191,54 @@ export function ProjectsTasks() {
               </select>
             </label>
             <label className="form-field">
+              Contribui para o objetivo
+              <select
+                value={projectForm.objectiveId}
+                onChange={(e) => setProjectForm({ ...projectForm, objectiveId: e.target.value })}
+              >
+                <option value="">—</option>
+                {objectives
+                  .filter((o) => o.status === "ACTIVE")
+                  .map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.title}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="form-field">
               Prioridade
-              <PrioritySelect value={projectForm.priority} onChange={(priority) => setProjectForm({ ...projectForm, priority })} />
+              <PrioritySelect
+                value={projectForm.priority}
+                onChange={(priority) => setProjectForm({ ...projectForm, priority })}
+              />
             </label>
             <label className="form-field">
               Início
-              <input type="date" required value={projectForm.startDate} onChange={(e) => setProjectForm({ ...projectForm, startDate: e.target.value })} />
+              <input
+                type="date"
+                required
+                value={projectForm.startDate}
+                onChange={(e) => setProjectForm({ ...projectForm, startDate: e.target.value })}
+              />
             </label>
             <label className="form-field">
               Prazo
-              <input type="date" required value={projectForm.dueDate} onChange={(e) => setProjectForm({ ...projectForm, dueDate: e.target.value })} />
+              <input
+                type="date"
+                required
+                value={projectForm.dueDate}
+                onChange={(e) => setProjectForm({ ...projectForm, dueDate: e.target.value })}
+              />
             </label>
           </div>
           <label className="form-field" style={{ marginBottom: "0.8rem" }}>
             Descrição
-            <textarea rows={2} value={projectForm.description} onChange={(e) => setProjectForm({ ...projectForm, description: e.target.value })} />
+            <textarea
+              rows={2}
+              value={projectForm.description}
+              onChange={(e) => setProjectForm({ ...projectForm, description: e.target.value })}
+            />
           </label>
           <button className="btn" type="submit">
             Criar projeto
@@ -204,16 +266,23 @@ export function ProjectsTasks() {
               {projects.map((p) => (
                 <tr key={p.id} className={projectFilter === p.id ? "row-selected" : ""}>
                   <td>
-                    <button className="link-button" onClick={() => setProjectFilter(projectFilter === p.id ? "" : p.id)}>
+                    <button
+                      className="link-button"
+                      onClick={() => setProjectFilter(projectFilter === p.id ? "" : p.id)}
+                    >
                       {p.name}
                     </button>
                     <div className="hint">
                       {p.department?.code ?? "Sem departamento"} · Prioridade {PRIORITY_LABEL[p.priority].toLowerCase()}
+                      {p.objectiveId && ` · Objetivo: ${objectives.find((o) => o.id === p.objectiveId)?.title ?? "—"}`}
                     </div>
                   </td>
                   <td>{p.owner?.fullName ?? "-"}</td>
                   <td>
-                    <select value={p.status} onChange={(e) => updateProject(p.id, { status: e.target.value as ProjectStatus })}>
+                    <select
+                      value={p.status}
+                      onChange={(e) => updateProject(p.id, { status: e.target.value as ProjectStatus })}
+                    >
                       {Object.entries(PROJECT_STATUS_LABEL).map(([value, label]) => (
                         <option key={value} value={value}>
                           {label}
@@ -236,12 +305,17 @@ export function ProjectsTasks() {
                   </td>
                   <td className="num">
                     {p.taskCount - p.openTaskCount}/{p.taskCount}
-                    {p.overdueTaskCount > 0 && <div className="health-text-RED hint">{p.overdueTaskCount} em atraso</div>}
+                    {p.overdueTaskCount > 0 && (
+                      <div className="health-text-RED hint">{p.overdueTaskCount} em atraso</div>
+                    )}
                   </td>
                   <td>
                     <button
                       className="btn danger"
-                      onClick={() => confirm(`Remover o projeto "${p.name}" e as suas tarefas?`) && run(() => perfApi.projects.remove(p.id), "Erro ao remover projeto")}
+                      onClick={() =>
+                        confirm(`Remover o projeto "${p.name}" e as suas tarefas?`) &&
+                        run(() => perfApi.projects.remove(p.id), "Erro ao remover projeto")
+                      }
                     >
                       Remover
                     </button>
@@ -290,13 +364,18 @@ export function ProjectsTasks() {
             ))}
           </div>
         </div>
-        {taskFilter === "MINE" && !me && (
-          <p className="hint">Escolha quem é em “Eu sou” no topo da página para ver as suas tarefas.</p>
-        )}
 
         <form className="inline-form" onSubmit={createTask}>
-          <input required placeholder="Nova tarefa..." value={taskForm.title} onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })} />
-          <select value={taskForm.projectId || projectFilter} onChange={(e) => setTaskForm({ ...taskForm, projectId: e.target.value })}>
+          <input
+            required
+            placeholder="Nova tarefa..."
+            value={taskForm.title}
+            onChange={(e) => setTaskForm({ ...taskForm, title: e.target.value })}
+          />
+          <select
+            value={taskForm.projectId || projectFilter}
+            onChange={(e) => setTaskForm({ ...taskForm, projectId: e.target.value })}
+          >
             <option value="">Sem projeto</option>
             {projects.map((p) => (
               <option key={p.id} value={p.id}>
@@ -313,7 +392,12 @@ export function ProjectsTasks() {
           <PrioritySelect value={taskForm.priority} onChange={(priority) => setTaskForm({ ...taskForm, priority })} />
           <label className="inline-label">
             Prazo
-            <input type="date" required value={taskForm.dueDate} onChange={(e) => setTaskForm({ ...taskForm, dueDate: e.target.value })} />
+            <input
+              type="date"
+              required
+              value={taskForm.dueDate}
+              onChange={(e) => setTaskForm({ ...taskForm, dueDate: e.target.value })}
+            />
           </label>
           <button className="btn" type="submit">
             Adicionar
@@ -335,7 +419,13 @@ export function ProjectsTasks() {
             </thead>
             <tbody>
               {visibleTasks.map((t) => (
-                <TaskRow key={t.id} task={t} people={people} onUpdate={updateTask} onRemove={() => run(() => perfApi.tasks.remove(t.id), "Erro ao remover tarefa")} />
+                <TaskRow
+                  key={t.id}
+                  task={t}
+                  people={people}
+                  onUpdate={updateTask}
+                  onRemove={() => run(() => perfApi.tasks.remove(t.id), "Erro ao remover tarefa")}
+                />
               ))}
               {visibleTasks.length === 0 && (
                 <tr>
@@ -376,7 +466,11 @@ function TaskRow({
         </div>
       </td>
       <td>
-        <PersonSelect people={people} value={t.assigneeId ?? ""} onChange={(assigneeId) => onUpdate(t.id, { assigneeId: assigneeId || null })} />
+        <PersonSelect
+          people={people}
+          value={t.assigneeId ?? ""}
+          onChange={(assigneeId) => onUpdate(t.id, { assigneeId: assigneeId || null })}
+        />
       </td>
       <td>
         <select value={t.status} onChange={(e) => onUpdate(t.id, { status: e.target.value as TaskStatus })}>
@@ -416,7 +510,11 @@ function TaskRow({
         {!closed && <div className="hint">{daysLabel(t.schedule.daysRemaining)}</div>}
       </td>
       <td>
-        {t.status === "CANCELLED" ? <HealthBadge health="NO_DATA" label="Cancelada" /> : <TimingBadge timing={t.schedule.timing} />}
+        {t.status === "CANCELLED" ? (
+          <HealthBadge health="NO_DATA" label="Cancelada" />
+        ) : (
+          <TimingBadge timing={t.schedule.timing} />
+        )}
       </td>
       <td>
         <button className="btn danger" onClick={() => confirm(`Remover a tarefa "${t.title}"?`) && onRemove()}>

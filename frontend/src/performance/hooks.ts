@@ -1,40 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useAuth } from "../auth/context";
 import { perfApi } from "./api";
 import type { Alert } from "./types";
 
-// ---------------------------------------------------------------------------
-// Utilizador atual ("Eu sou ..."): usado para filtrar "as minhas tarefas"
-// e "os meus alertas". Guardado no navegador, já que a aplicação não tem login.
-// ---------------------------------------------------------------------------
-
-const ME_KEY = "perf.currentPersonId";
-
-export function getCurrentPersonId(): string {
-  try {
-    return localStorage.getItem(ME_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-export function setCurrentPersonId(id: string): void {
-  try {
-    if (id) localStorage.setItem(ME_KEY, id);
-    else localStorage.removeItem(ME_KEY);
-  } catch {
-    // armazenamento indisponível (modo privado): o filtro só dura a sessão
-  }
-  window.dispatchEvent(new Event("perf-me-changed"));
-}
-
-export function useCurrentPersonId(): [string, (id: string) => void] {
-  const [id, setId] = useState(getCurrentPersonId);
-  useEffect(() => {
-    const sync = () => setId(getCurrentPersonId());
-    window.addEventListener("perf-me-changed", sync);
-    return () => window.removeEventListener("perf-me-changed", sync);
-  }, []);
-  return [id, setCurrentPersonId];
+/** Id da pessoa com sessão iniciada (usado nos filtros "as minhas" / "os meus"). */
+export function useCurrentPersonId(): [string] {
+  return [useAuth().user?.id ?? ""];
 }
 
 // ---------------------------------------------------------------------------

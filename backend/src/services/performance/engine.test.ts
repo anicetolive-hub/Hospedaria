@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   combineScores,
+  computeObjectiveProgress,
   deliveryScore,
   evaluateKpi,
   evaluateSchedule,
@@ -8,6 +9,7 @@ import {
   kpiAttainment,
   kpiHealth,
   lastClosedPeriod,
+  objectivePaceScore,
   periodOf,
   projectProgress,
   scheduleAlert,
@@ -201,9 +203,57 @@ describe("pontuação", () => {
     expect(deliveryScore([], now)).toBeNull();
   });
 
-  it("combina KPI e entrega com os pesos configurados", () => {
-    expect(combineScores(100, 50)).toBe(80);
-    expect(combineScores(null, 70)).toBe(70);
-    expect(combineScores(null, null)).toBeNull();
+  it("combina KPIs, objetivos e entrega com os pesos configurados", () => {
+    expect(combineScores({ kpi: 100, objectives: 100, delivery: 50 })).toBe(85);
+    // Sem objetivos: KPIs 0,5 e entrega 0,3 reponderados para 5/8 e 3/8
+    expect(combineScores({ kpi: 100, objectives: null, delivery: 60 })).toBe(85);
+    expect(combineScores({ kpi: null, objectives: null, delivery: 70 })).toBe(70);
+    expect(combineScores({ kpi: null, objectives: null, delivery: null })).toBeNull();
+  });
+});
+
+describe("objetivos", () => {
+  const obj = (id: string, parentId: string | null, extra: Partial<{ status: string; weight: number; progress: number }> = {}) => ({
+    id,
+    parentId,
+    status: "ACTIVE",
+    weight: 1,
+    progress: 0,
+    ...extra,
+  });
+
+  it("calcula o progresso em cascata a partir de KPIs, projetos e filhos", () => {
+    const result = computeObjectiveProgress(
+      [obj("estrategico", null), obj("direcao", "estrategico", { weight: 3 }), obj("individual", "direcao", { progress: 40 }), obj("outro", "estrategico", { progress: 0 })],
+      [{ objectiveId: "direcao", attainment: 110, weight: 1 }], // conta como 100
+      [{ objectiveId: "direcao", progress: 60, status: "IN_PROGRESS" }],
+    );
+    expect(result.get("individual")).toEqual({ progress: 40, source: "MANUAL" });
+    // direção: média de KPI 100, projeto 60 e filho 40 → 67
+    expect(result.get("direcao")).toEqual({ progress: 67, source: "LINKED" });
+    // estratégico: (67×3 + 0×1) / 4 → 50
+    expect(result.get("estrategico")?.progress).toBe(50);
+  });
+
+  it("ignora filhos cancelados e trata alcançados como 100%", () => {
+    const result = computeObjectiveProgress(
+      [obj("pai", null), obj("a", "pai", { status: "ACHIEVED" }), obj("b", "pai", { status: "CANCELLED", progress: 0 })],
+      [],
+      [],
+    );
+    expect(result.get("pai")?.progress).toBe(100);
+  });
+
+  it("não entra em ciclo infinito com hierarquia circular", () => {
+    const result = computeObjectiveProgress([obj("a", "b", { progress: 30 }), obj("b", "a", { progress: 70 })], [], []);
+    expect(result.size).toBe(2);
+  });
+
+  it("avalia o ritmo face ao prazo decorrido", () => {
+    expect(objectivePaceScore("ACTIVE", 30, 60)).toBe(50);
+    expect(objectivePaceScore("ACTIVE", 80, 40)).toBe(100);
+    expect(objectivePaceScore("ACTIVE", 0, 5)).toBeNull();
+    expect(objectivePaceScore("ACHIEVED", 10, 90)).toBe(100);
+    expect(objectivePaceScore("CANCELLED", 10, 90)).toBeNull();
   });
 });

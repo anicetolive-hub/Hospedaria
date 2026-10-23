@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "../../api";
+import { useAuth } from "../../auth/context";
 import { perfApi, type KpiInput } from "../../performance/api";
 import { HealthBadge } from "../../performance/components";
 import { notifyDataChanged } from "../../performance/hooks";
 import { FREQUENCY_LABEL, formatNumber } from "../../performance/labels";
 import { departmentTree } from "../../performance/tree";
-import type { Department, Kpi, KpiDirection, KpiFrequency, Person } from "../../performance/types";
+import type { Department, Kpi, KpiDirection, KpiFrequency, Objective, Person } from "../../performance/types";
 
 const emptyKpi = {
   name: "",
@@ -18,12 +19,16 @@ const emptyKpi = {
   weight: "1",
   departmentId: "",
   ownerId: "",
+  objectiveId: "",
 };
 
 const TREND_ICON = { UP: "▲", DOWN: "▼", STABLE: "▬" } as const;
 
 export function Kpis() {
+  const { user } = useAuth();
+  const isAdmin = !!user?.isAdmin;
   const [kpis, setKpis] = useState<Kpi[]>([]);
+  const [objectives, setObjectives] = useState<Objective[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [form, setForm] = useState(emptyKpi);
@@ -39,6 +44,7 @@ export function Kpis() {
     reload();
     perfApi.departments.list().then(setDepartments);
     perfApi.people.list().then(setPeople);
+    perfApi.objectives.list().then(setObjectives);
   }, [reload]);
 
   async function run(action: () => Promise<unknown>, fallback: string) {
@@ -63,6 +69,7 @@ export function Kpis() {
       weight: Number(form.weight),
       departmentId: form.departmentId || null,
       ownerId: form.ownerId || null,
+      objectiveId: form.objectiveId || null,
     };
     if (await run(() => perfApi.kpis.create(data), "Erro ao criar KPI")) {
       setForm(emptyKpi);
@@ -83,9 +90,11 @@ export function Kpis() {
     <div>
       <div className="page-header">
         <h2>KPIs</h2>
-        <button className="btn" onClick={() => setShowForm((v) => !v)}>
-          {showForm ? "Fechar" : "Novo KPI"}
-        </button>
+        {isAdmin && (
+          <button className="btn" onClick={() => setShowForm((v) => !v)}>
+            {showForm ? "Fechar" : "Novo KPI"}
+          </button>
+        )}
       </div>
 
       {error && <div className="error-banner">{error}</div>}
@@ -95,7 +104,12 @@ export function Kpis() {
           <div className="form-grid">
             <label className="form-field">
               Nome do KPI
-              <input required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="ex: Tickets resolvidos no SLA" />
+              <input
+                required
+                value={form.name}
+                onChange={(e) => setForm({ ...form, name: e.target.value })}
+                placeholder="ex: Tickets resolvidos no SLA"
+              />
             </label>
             <label className="form-field">
               Departamento
@@ -112,31 +126,62 @@ export function Kpis() {
               Responsável (gestor/coordenador)
               <select value={form.ownerId} onChange={(e) => setForm({ ...form, ownerId: e.target.value })}>
                 <option value="">—</option>
-                {people.filter((p) => p.active).map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.fullName}
-                  </option>
-                ))}
+                {people
+                  .filter((p) => p.active)
+                  .map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.fullName}
+                    </option>
+                  ))}
+              </select>
+            </label>
+            <label className="form-field">
+              Contribui para o objetivo
+              <select value={form.objectiveId} onChange={(e) => setForm({ ...form, objectiveId: e.target.value })}>
+                <option value="">—</option>
+                {objectives
+                  .filter((o) => o.status === "ACTIVE")
+                  .map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.title}
+                    </option>
+                  ))}
               </select>
             </label>
             <label className="form-field">
               Meta
-              <input required type="number" step="any" value={form.target} onChange={(e) => setForm({ ...form, target: e.target.value })} />
+              <input
+                required
+                type="number"
+                step="any"
+                value={form.target}
+                onChange={(e) => setForm({ ...form, target: e.target.value })}
+              />
             </label>
             <label className="form-field">
               Unidade
-              <input value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} placeholder="%, h, tickets..." />
+              <input
+                value={form.unit}
+                onChange={(e) => setForm({ ...form, unit: e.target.value })}
+                placeholder="%, h, tickets..."
+              />
             </label>
             <label className="form-field">
               Sentido
-              <select value={form.direction} onChange={(e) => setForm({ ...form, direction: e.target.value as KpiDirection })}>
+              <select
+                value={form.direction}
+                onChange={(e) => setForm({ ...form, direction: e.target.value as KpiDirection })}
+              >
                 <option value="HIGHER_IS_BETTER">Quanto maior, melhor</option>
                 <option value="LOWER_IS_BETTER">Quanto menor, melhor</option>
               </select>
             </label>
             <label className="form-field">
               Frequência de medição
-              <select value={form.frequency} onChange={(e) => setForm({ ...form, frequency: e.target.value as KpiFrequency })}>
+              <select
+                value={form.frequency}
+                onChange={(e) => setForm({ ...form, frequency: e.target.value as KpiFrequency })}
+              >
                 {Object.entries(FREQUENCY_LABEL).map(([value, label]) => (
                   <option key={value} value={value}>
                     {label}
@@ -146,16 +191,30 @@ export function Kpis() {
             </label>
             <label className="form-field">
               Limiar crítico (% da meta)
-              <input required type="number" min={0} max={100} value={form.warningThreshold} onChange={(e) => setForm({ ...form, warningThreshold: e.target.value })} />
+              <input
+                required
+                type="number"
+                min={0}
+                max={100}
+                value={form.warningThreshold}
+                onChange={(e) => setForm({ ...form, warningThreshold: e.target.value })}
+              />
             </label>
             <label className="form-field">
               Peso na avaliação
-              <input required type="number" min={0.1} step="any" value={form.weight} onChange={(e) => setForm({ ...form, weight: e.target.value })} />
+              <input
+                required
+                type="number"
+                min={0.1}
+                step="any"
+                value={form.weight}
+                onChange={(e) => setForm({ ...form, weight: e.target.value })}
+              />
             </label>
           </div>
           <p className="hint">
-            Atingimento ≥ 100% da meta fica verde; entre o limiar crítico e 100% fica amarelo; abaixo do limiar fica vermelho
-            e gera alerta crítico.
+            Atingimento ≥ 100% da meta fica verde; entre o limiar crítico e 100% fica amarelo; abaixo do limiar fica
+            vermelho e gera alerta crítico.
           </p>
           <button className="btn" type="submit">
             Criar KPI
@@ -187,9 +246,21 @@ export function Kpis() {
                     kpi={k}
                     expanded={expanded === k.id}
                     onToggle={() => setExpanded(expanded === k.id ? null : k.id)}
-                    onMeasure={(period, value) => run(() => perfApi.kpis.addMeasurement(k.id, { period, value }), "Erro ao registar valor")}
-                    onRemoveMeasurement={(id) => run(() => perfApi.kpis.removeMeasurement(k.id, id), "Erro ao remover medição")}
-                    onRemove={() => confirm(`Remover o KPI "${k.name}" e o seu histórico?`) && run(() => perfApi.kpis.remove(k.id), "Erro ao remover KPI")}
+                    onMeasure={(period, value) =>
+                      run(() => perfApi.kpis.addMeasurement(k.id, { period, value }), "Erro ao registar valor")
+                    }
+                    onRemoveMeasurement={(id) =>
+                      run(() => perfApi.kpis.removeMeasurement(k.id, id), "Erro ao remover medição")
+                    }
+                    objectives={objectives}
+                    isAdmin={isAdmin}
+                    onLinkObjective={(objectiveId) =>
+                      run(() => perfApi.kpis.update(k.id, { objectiveId }), "Erro ao ligar objetivo")
+                    }
+                    onRemove={() =>
+                      confirm(`Remover o KPI "${k.name}" e o seu histórico?`) &&
+                      run(() => perfApi.kpis.remove(k.id), "Erro ao remover KPI")
+                    }
                   />
                 ))}
               </tbody>
@@ -208,9 +279,15 @@ function KpiRow({
   onToggle,
   onMeasure,
   onRemoveMeasurement,
+  objectives,
+  isAdmin,
+  onLinkObjective,
   onRemove,
 }: {
   kpi: Kpi;
+  objectives: Objective[];
+  isAdmin: boolean;
+  onLinkObjective: (objectiveId: string | null) => void;
   expanded: boolean;
   onToggle: () => void;
   onMeasure: (period: string, value: number) => Promise<boolean>;
@@ -235,7 +312,8 @@ function KpiRow({
             {expanded ? "▾" : "▸"} {k.name}
           </button>
           <div className="hint">
-            {FREQUENCY_LABEL[k.frequency]} · {k.direction === "LOWER_IS_BETTER" ? "menor é melhor" : "maior é melhor"} · peso {k.weight}
+            {FREQUENCY_LABEL[k.frequency]} · {k.direction === "LOWER_IS_BETTER" ? "menor é melhor" : "maior é melhor"} ·
+            peso {k.weight}
           </div>
         </td>
         <td>{k.owner?.fullName ?? "-"}</td>
@@ -247,7 +325,9 @@ function KpiRow({
         <td className="num">
           {formatNumber(ev.attainment, "%")}{" "}
           {ev.trend && (
-            <span className={ev.trend === "UP" ? "health-text-GREEN" : ev.trend === "DOWN" ? "health-text-RED" : "hint"}>
+            <span
+              className={ev.trend === "UP" ? "health-text-GREEN" : ev.trend === "DOWN" ? "health-text-RED" : "hint"}
+            >
               {TREND_ICON[ev.trend]}
             </span>
           )}
@@ -258,23 +338,52 @@ function KpiRow({
         </td>
         <td>
           <form className="inline-form compact" onSubmit={submit}>
-            <input value={period} onChange={(e) => setPeriod(e.target.value)} style={{ width: 90 }} title="Período (ex: 2026-10, 2026-Q4, 2026-W43, 2026)" />
-            <input type="number" step="any" placeholder="Valor" value={value} onChange={(e) => setValue(e.target.value)} style={{ width: 80 }} />
+            <input
+              value={period}
+              onChange={(e) => setPeriod(e.target.value)}
+              style={{ width: 90 }}
+              title="Período (ex: 2026-10, 2026-Q4, 2026-W43, 2026)"
+            />
+            <input
+              type="number"
+              step="any"
+              placeholder="Valor"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              style={{ width: 80 }}
+            />
             <button className="btn secondary" type="submit">
               OK
             </button>
           </form>
         </td>
         <td>
-          <button className="btn danger" onClick={onRemove}>
-            ✕
-          </button>
+          {isAdmin && (
+            <button className="btn danger" onClick={onRemove}>
+              ✕
+            </button>
+          )}
         </td>
       </tr>
       {expanded && (
         <tr className="row-detail">
           <td colSpan={8}>
             {k.description && <p style={{ marginTop: 0 }}>{k.description}</p>}
+            <p style={{ marginTop: 0 }} className="hint">
+              Contribui para o objetivo:{" "}
+              {isAdmin ? (
+                <select value={k.objectiveId ?? ""} onChange={(e) => onLinkObjective(e.target.value || null)}>
+                  <option value="">—</option>
+                  {objectives.map((o) => (
+                    <option key={o.id} value={o.id}>
+                      {o.title}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                (objectives.find((o) => o.id === k.objectiveId)?.title ?? "—")
+              )}
+            </p>
             {k.measurements.length === 0 ? (
               <span className="hint">Sem medições registadas.</span>
             ) : (
@@ -283,7 +392,10 @@ function KpiRow({
                   <div key={m.id} className="history-item">
                     <div className="hint">{m.period}</div>
                     <strong>{formatNumber(m.value, k.unit)}</strong>
-                    <button className="link-button hint" onClick={() => confirm(`Remover a medição de ${m.period}?`) && onRemoveMeasurement(m.id)}>
+                    <button
+                      className="link-button hint"
+                      onClick={() => confirm(`Remover a medição de ${m.period}?`) && onRemoveMeasurement(m.id)}
+                    >
                       remover
                     </button>
                   </div>

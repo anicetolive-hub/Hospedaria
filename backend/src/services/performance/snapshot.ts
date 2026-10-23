@@ -1,8 +1,10 @@
-import { prisma } from "../../lib/prisma";
 import { env } from "../../lib/env";
+import { PERSON_PUBLIC } from "../../lib/personSelect";
+import { prisma } from "../../lib/prisma";
 import {
   Alert,
   combineScores,
+  computeObjectiveProgress,
   deliveryScore,
   evaluateKpi,
   evaluateSchedule,
@@ -11,12 +13,14 @@ import {
   KpiDirection,
   KpiEvaluation,
   KpiFrequency,
+  objectivePaceScore,
   projectProgress,
   scheduleAlert,
   ScheduleEvaluation,
   scoreHealth,
   sortAlerts,
   weightedKpiScore,
+  weightedScore,
 } from "./engine";
 
 // Carrega todo o módulo de performance de uma vez e calcula indicadores em
@@ -25,26 +29,33 @@ import {
 
 export interface Scorecard {
   kpiScore: number | null;
+  objectiveScore: number | null;
   deliveryScore: number | null;
   score: number | null;
   health: Health;
   kpiCount: number;
   kpisRed: number;
+  objectiveCount: number;
   openTasks: number;
   overdueTasks: number;
 }
 
 export async function loadSnapshot(now = new Date()) {
-  const [departments, people, kpis, projects, tasks] = await Promise.all([
+  const ownerSelect = { select: PERSON_PUBLIC };
+  const [departments, people, kpis, projects, tasks, objectives] = await Promise.all([
     prisma.department.findMany({ orderBy: { name: "asc" } }),
-    prisma.person.findMany({ orderBy: { fullName: "asc" }, include: { department: true } }),
+    prisma.person.findMany({
+      orderBy: { fullName: "asc" },
+      select: { ...PERSON_PUBLIC, passwordHash: true, department: true },
+    }),
     prisma.kpi.findMany({
       where: { active: true },
       orderBy: { name: "asc" },
-      include: { measurements: { orderBy: { period: "desc" } }, owner: true, department: true },
+      include: { measurements: { orderBy: { period: "desc" } }, owner: ownerSelect, department: true },
     }),
-    prisma.project.findMany({ orderBy: { dueDate: "asc" }, include: { owner: true, department: true } }),
-    prisma.task.findMany({ orderBy: { dueDate: "asc" }, include: { assignee: true, project: true } }),
+    prisma.project.findMany({ orderBy: { dueDate: "asc" }, include: { owner: ownerSelect, department: true } }),
+    prisma.task.findMany({ orderBy: { dueDate: "asc" }, include: { assignee: ownerSelect, project: true } }),
+    prisma.objective.findMany({ orderBy: { dueDate: "asc" }, include: { owner: ownerSelect, department: true } }),
   ]);
 
   const dueSoonDays = env.performance.dueSoonDays;
@@ -71,31 +82,62 @@ export async function loadSnapshot(now = new Date()) {
     };
   });
 
-  function scorecard(kpiList: typeof kpiViews, taskList: typeof taskViews): Scorecard {
+  const objectiveProgress = computeObjectiveProgress(
+    objectives,
+    kpiViews.map((k) => ({ objectiveId: k.objectiveId, attainment: k.evaluation.attainment, weight: k.weight })),
+    projectViews,
+  );
+  const objectiveViews = objectives.map((o) => {
+    const { progress, source } = objectiveProgress.get(o.id) as { progress: number; source: "LINKED" | "MANUAL" };
+    const schedule = evaluateSchedule(
+      { ...o, progress, status: o.status === "ACHIEVED" ? "DONE" : o.status, completedAt: o.achievedAt },
+      now,
+      dueSoonDays,
+    );
+    return {
+      ...o,
+      progress,
+      manualProgress: o.progress,
+      progressSource: source,
+      schedule,
+      paceScore: objectivePaceScore(o.status, progress, schedule.elapsedPct),
+      kpiCount: kpiViews.filter((k) => k.objectiveId === o.id).length,
+      projectCount: projectViews.filter((p) => p.objectiveId === o.id).length,
+      childCount: objectives.filter((c) => c.parentId === o.id).length,
+    };
+  });
+
+  function scorecard(kpiList: typeof kpiViews, taskList: typeof taskViews, objectiveList: typeof objectiveViews): Scorecard {
     const kpiScore = weightedKpiScore(kpiList.map((k) => ({ attainment: k.evaluation.attainment, weight: k.weight })));
+    const objectiveScore = weightedScore(objectiveList.map((o) => ({ score: o.paceScore, weight: o.weight })));
     const delivery = deliveryScore(taskList, now);
-    const score = combineScores(kpiScore, delivery);
+    const score = combineScores({ kpi: kpiScore, objectives: objectiveScore, delivery });
     return {
       kpiScore,
+      objectiveScore,
       deliveryScore: delivery,
       score,
       health: scoreHealth(score),
       kpiCount: kpiList.length,
       kpisRed: kpiList.filter((k) => k.evaluation.health === "RED").length,
+      objectiveCount: objectiveList.filter((o) => o.status !== "CANCELLED").length,
       openTasks: taskList.filter((t) => isOpen(t.status)).length,
       overdueTasks: taskList.filter((t) => t.schedule.timing === "OVERDUE").length,
     };
   }
 
-  const peopleViews = people.map((person) => ({
+  // Nota da pessoa: KPIs e objetivos de que é responsável + entrega das suas tarefas
+  const peopleViews = people.map(({ passwordHash, ...person }) => ({
     ...person,
+    hasPassword: !!passwordHash,
     scorecard: scorecard(
       kpiViews.filter((k) => k.ownerId === person.id),
       taskViews.filter((t) => t.assigneeId === person.id),
+      objectiveViews.filter((o) => o.ownerId === person.id),
     ),
   }));
 
-  // Nota própria do departamento: os KPIs do departamento + entrega das tarefas da sua equipa.
+  // Nota própria do departamento: KPIs e objetivos de direção do departamento + entrega das tarefas da equipa.
   const ownScorecards = new Map(
     departments.map((d) => {
       const memberIds = new Set(people.filter((p) => p.departmentId === d.id).map((p) => p.id));
@@ -104,6 +146,7 @@ export async function loadSnapshot(now = new Date()) {
         scorecard(
           kpiViews.filter((k) => k.departmentId === d.id),
           taskViews.filter((t) => t.assigneeId !== null && memberIds.has(t.assigneeId)),
+          objectiveViews.filter((o) => o.departmentId === d.id && o.level !== "INDIVIDUAL"),
         ),
       ];
     }),
@@ -128,7 +171,7 @@ export async function loadSnapshot(now = new Date()) {
     const consolidatedScore = consolidate(d.id);
     return {
       ...d,
-      head: headOf(people.filter((p) => p.departmentId === d.id && p.active)),
+      head: headOf(peopleViews.filter((p) => p.departmentId === d.id && p.active)),
       memberCount: people.filter((p) => p.departmentId === d.id && p.active).length,
       scorecard: ownScorecards.get(d.id) as Scorecard,
       consolidatedScore,
@@ -147,6 +190,11 @@ export async function loadSnapshot(now = new Date()) {
     const alert = scheduleAlert("PROJECT", project, project.schedule, owner);
     if (alert) alerts.push(alert);
   }
+  for (const objective of objectiveViews) {
+    const owner = objective.ownerId ? personById.get(objective.ownerId) ?? null : null;
+    const alert = scheduleAlert("OBJECTIVE", { ...objective, name: objective.title }, objective.schedule, owner);
+    if (alert) alerts.push(alert);
+  }
   for (const kpi of kpiViews) {
     const owner = kpi.ownerId ? personById.get(kpi.ownerId) ?? null : null;
     const alert = kpiAlert(kpi.input, kpi.evaluation, owner);
@@ -160,6 +208,7 @@ export async function loadSnapshot(now = new Date()) {
     kpis: kpiViews.map(({ input: _input, ...k }) => k),
     projects: projectViews,
     tasks: taskViews,
+    objectives: objectiveViews,
     alerts: sortAlerts(alerts),
   };
 }

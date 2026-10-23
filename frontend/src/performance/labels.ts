@@ -95,3 +95,9 @@ export function scoreHealth(score: number | null): Health {
   if (score >= 70) return "YELLOW";
   return "RED";
 }
+
+export const OBJECTIVE_LEVEL_LABEL = {
+  STRATEGIC: "Estratégico",
+  DIRECTION: "Direção",
+  INDIVIDUAL: "Individual",
+} as const;

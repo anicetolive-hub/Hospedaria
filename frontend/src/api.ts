@@ -13,11 +13,43 @@ export class ApiError extends Error {
   }
 }
 
+// Token da sessão de login. Fica no navegador para sobreviver a recarregamentos;
+// a API invalida-o no logout, na troca de password ou ao expirar.
+const TOKEN_KEY = "auth.token";
+
+export function getToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(token: string | null): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // armazenamento indisponível: a sessão dura até fechar a página
+  }
+}
+
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
   const response = await fetch(`${BASE_URL}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init?.headers,
+    },
   });
+
+  // Sessão expirada ou terminada: volta ao ecrã de login
+  if (response.status === 401 && token && !path.startsWith("/api/auth/login")) {
+    setToken(null);
+    window.dispatchEvent(new Event("auth-expired"));
+  }
 
   if (response.status === 204) return undefined as T;
 

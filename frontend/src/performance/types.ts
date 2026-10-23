@@ -10,11 +10,13 @@ export type AlertSeverity = "CRITICAL" | "WARNING" | "INFO";
 
 export interface Scorecard {
   kpiScore: number | null;
+  objectiveScore: number | null;
   deliveryScore: number | null;
   score: number | null;
   health: Health;
   kpiCount: number;
   kpisRed: number;
+  objectiveCount: number;
   openTasks: number;
   overdueTasks: number;
 }
@@ -41,6 +43,8 @@ export interface Person {
   departmentId?: string | null;
   department?: { id: string; name: string; code: string } | null;
   active: boolean;
+  isAdmin: boolean;
+  hasPassword?: boolean;
   scorecard?: Scorecard;
 }
 
@@ -73,6 +77,7 @@ export interface Kpi {
   weight: number;
   departmentId?: string | null;
   ownerId?: string | null;
+  objectiveId?: string | null;
   department?: { id: string; name: string; code: string } | null;
   owner?: Person | null;
   measurements: KpiMeasurement[];
@@ -97,6 +102,7 @@ export interface Project {
   completedAt?: string | null;
   ownerId?: string | null;
   departmentId?: string | null;
+  objectiveId?: string | null;
   owner?: Person | null;
   department?: { id: string; name: string; code: string } | null;
   progress: number;
@@ -126,7 +132,7 @@ export interface Task {
 export interface Alert {
   key: string;
   severity: AlertSeverity;
-  category: "TASK" | "PROJECT" | "KPI";
+  category: "TASK" | "PROJECT" | "KPI" | "OBJECTIVE";
   entityId: string;
   title: string;
   message: string;
@@ -135,8 +141,38 @@ export interface Alert {
   dueDate?: string;
 }
 
+export type ObjectiveLevel = "STRATEGIC" | "DIRECTION" | "INDIVIDUAL";
+export type ObjectiveStatus = "ACTIVE" | "ACHIEVED" | "CANCELLED";
+
+export interface Objective {
+  id: string;
+  title: string;
+  description?: string | null;
+  level: ObjectiveLevel;
+  status: ObjectiveStatus;
+  weight: number;
+  progress: number; // calculado
+  manualProgress: number;
+  progressSource: "LINKED" | "MANUAL";
+  startDate: string;
+  dueDate: string;
+  achievedAt?: string | null;
+  parentId?: string | null;
+  departmentId?: string | null;
+  ownerId?: string | null;
+  owner?: Person | null;
+  department?: { id: string; name: string; code: string } | null;
+  schedule: ScheduleEvaluation;
+  paceScore: number | null;
+  kpiCount: number;
+  projectCount: number;
+  childCount: number;
+}
+
 export interface Dashboard {
   generatedAt: string;
+  me: Person | null;
+  strategicObjectives: Objective[];
   departments: Department[];
   leaders: Person[];
   kpiHealth: Partial<Record<Health, number>>;

@@ -20,6 +20,10 @@ export const env = {
     clientId: process.env.TUYA_CLIENT_ID ?? "",
     clientSecret: process.env.TUYA_CLIENT_SECRET ?? "",
   },
+  auth: {
+    // Duração de uma sessão de login, em horas
+    sessionTtlHours: Number(process.env.SESSION_TTL_HOURS ?? 12),
+  },
   performance: {
     // Tarefas/projetos a N dias (ou menos) do prazo geram alerta "prazo a terminar"
     dueSoonDays: Number(process.env.ALERT_DUE_SOON_DAYS ?? 3),

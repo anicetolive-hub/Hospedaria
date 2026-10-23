@@ -3,8 +3,8 @@ import { Link } from "react-router-dom";
 import { ApiError } from "../../api";
 import { perfApi } from "../../performance/api";
 import { AlertList } from "../../performance/AlertList";
-import { HealthBadge, ScoreValue } from "../../performance/components";
-import { ROLE_LABEL, scoreHealth } from "../../performance/labels";
+import { HealthBadge, ProgressBar, ScoreValue, TimingBadge } from "../../performance/components";
+import { formatDate, ROLE_LABEL, scoreHealth, TIMING_HEALTH } from "../../performance/labels";
 import { departmentTree } from "../../performance/tree";
 import type { Dashboard } from "../../performance/types";
 
@@ -28,14 +28,15 @@ export function PerformanceDashboard() {
   if (!data) return <p className="hint">Carregando...</p>;
 
   const roots = data.departments.filter((d) => !d.parentId);
-  const directionScore = roots.length === 1 ? roots[0].consolidatedScore : average(roots.map((d) => d.consolidatedScore));
+  const directionScore =
+    roots.length === 1 ? roots[0].consolidatedScore : average(roots.map((d) => d.consolidatedScore));
   const critical = data.alerts.filter((a) => a.severity === "CRITICAL").length;
 
   return (
     <div>
       <div className="page-header">
         <div>
-          <h2>Performance da Direção</h2>
+          <h2>Performance</h2>
           <p className="hint" style={{ margin: 0 }}>
             Atualizado às {new Date(data.generatedAt).toLocaleTimeString("pt-PT")}
           </p>
@@ -63,7 +64,9 @@ export function PerformanceDashboard() {
           <div className="label">Tarefas em atraso</div>
         </div>
         <div className="stat">
-          <div className="value health-text-YELLOW">{(data.taskTiming.AT_RISK ?? 0) + (data.taskTiming.DUE_SOON ?? 0)}</div>
+          <div className="value health-text-YELLOW">
+            {(data.taskTiming.AT_RISK ?? 0) + (data.taskTiming.DUE_SOON ?? 0)}
+          </div>
           <div className="label">Tarefas em risco / a terminar</div>
         </div>
         <div className="stat">
@@ -74,111 +77,177 @@ export function PerformanceDashboard() {
         </div>
       </div>
 
-      <div className="card">
-        <h3 className="card-title">Departamentos e KPIs</h3>
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>Departamento</th>
-                <th>Responsável</th>
-                <th className="num">KPIs</th>
-                <th className="num">Entrega</th>
-                <th className="num">Nota própria</th>
-                <th className="num">Consolidada</th>
-                <th>Situação</th>
-                <th className="num">KPIs críticos</th>
-                <th className="num">Tarefas atrasadas</th>
-              </tr>
-            </thead>
-            <tbody>
-              {departmentTree(data.departments).map(({ department: d, depth }) => (
-                <tr key={d.id}>
-                  <td style={{ paddingLeft: `${0.7 + depth * 1.2}rem` }}>
-                    <strong>{d.code}</strong> <span className="hint">{d.name}</span>
-                  </td>
-                  <td>{d.head?.fullName ?? <span className="hint">—</span>}</td>
-                  <td className="num">{fmt(d.scorecard.kpiScore)}</td>
-                  <td className="num">{fmt(d.scorecard.deliveryScore)}</td>
-                  <td className="num">
-                    <ScoreValue score={d.scorecard.score} health={d.scorecard.health} />
-                  </td>
-                  <td className="num">
-                    <ScoreValue score={d.consolidatedScore} health={d.consolidatedHealth} />
-                  </td>
-                  <td>
-                    <HealthBadge health={d.consolidatedHealth} />
-                  </td>
-                  <td className="num">{d.scorecard.kpisRed || "-"}</td>
-                  <td className="num">{d.scorecard.overdueTasks || "-"}</td>
-                </tr>
-              ))}
-              {data.departments.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="hint">
-                    Nenhum departamento cadastrado. Comece em <Link to="/performance/equipa">Equipa</Link>.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      {data.me?.scorecard && (
+        <div className="card">
+          <h3 className="card-title">A minha performance</h3>
+          <div className="card-grid">
+            <div className="stat">
+              <div className="value">
+                <ScoreValue score={data.me.scorecard.score} health={data.me.scorecard.health} />
+              </div>
+              <div className="label">Nota final</div>
+            </div>
+            <div className="stat">
+              <div className="value">{fmt(data.me.scorecard.kpiScore)}</div>
+              <div className="label">KPIs ({data.me.scorecard.kpiCount})</div>
+            </div>
+            <div className="stat">
+              <div className="value">{fmt(data.me.scorecard.objectiveScore)}</div>
+              <div className="label">Ritmo dos objetivos ({data.me.scorecard.objectiveCount})</div>
+            </div>
+            <div className="stat">
+              <div className="value">{fmt(data.me.scorecard.deliveryScore)}</div>
+              <div className="label">Entrega no prazo</div>
+            </div>
+            <div className="stat">
+              <div className={`value ${data.me.scorecard.overdueTasks ? "health-text-RED" : ""}`}>
+                {data.me.scorecard.overdueTasks}/{data.me.scorecard.openTasks}
+              </div>
+              <div className="label">Tarefas em atraso / abertas</div>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
 
-      <div className="card">
-        <h3 className="card-title">Gestores e coordenadores</h3>
-        <div className="table-scroll">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Nome</th>
-                <th>Cargo</th>
-                <th>Departamento</th>
-                <th className="num">KPIs</th>
-                <th className="num">Entrega</th>
-                <th className="num">Nota</th>
-                <th>Situação</th>
-                <th className="num">Tarefas abertas</th>
-                <th className="num">Em atraso</th>
-              </tr>
-            </thead>
-            <tbody>
-              {data.leaders.map((p, i) => (
-                <tr key={p.id}>
-                  <td className="hint">{i + 1}</td>
-                  <td>{p.fullName}</td>
-                  <td>{ROLE_LABEL[p.role]}</td>
-                  <td>{p.department?.code ?? "-"}</td>
-                  <td className="num">{fmt(p.scorecard?.kpiScore)}</td>
-                  <td className="num">{fmt(p.scorecard?.deliveryScore)}</td>
-                  <td className="num">
-                    <ScoreValue score={p.scorecard?.score ?? null} health={p.scorecard?.health ?? "NO_DATA"} />
-                  </td>
-                  <td>
-                    <HealthBadge health={p.scorecard?.health ?? "NO_DATA"} />
-                  </td>
-                  <td className="num">{p.scorecard?.openTasks ?? 0}</td>
-                  <td className={`num ${p.scorecard?.overdueTasks ? "health-text-RED" : ""}`}>
-                    {p.scorecard?.overdueTasks || "-"}
-                  </td>
-                </tr>
-              ))}
-              {data.leaders.length === 0 && (
-                <tr>
-                  <td colSpan={10} className="hint">
-                    Nenhum diretor, gestor ou coordenador cadastrado.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      {data.strategicObjectives.length > 0 && (
+        <div className="card">
+          <div className="page-header" style={{ marginBottom: "0.6rem" }}>
+            <h3 className="card-title" style={{ margin: 0 }}>
+              Objetivos estratégicos
+            </h3>
+            <Link to="/performance/objetivos">Ver cascata de objetivos</Link>
+          </div>
+          <div className="objective-cards">
+            {data.strategicObjectives.map((o) => (
+              <div key={o.id} className="objective-card">
+                <strong>{o.title}</strong>
+                <ProgressBar value={o.progress} health={TIMING_HEALTH[o.schedule.timing]} />
+                <div className="hint">
+                  {o.progress}% · prazo {formatDate(o.dueDate)} · {o.childCount} objetivo(s) de direção
+                </div>
+                <div>
+                  <TimingBadge timing={o.schedule.timing} />
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
-        <p className="hint">
-          Nota = 60% atingimento médio dos KPIs (ponderado pelo peso, máx. 120%) + 40% entrega de tarefas nos últimos 90
-          dias (no prazo = 100, com atraso = 50, em atraso = 0). Verde ≥ 90, amarelo ≥ 70, vermelho abaixo de 70.
-        </p>
-      </div>
+      )}
+
+      {data.departments.length > 0 && (
+        <div className="card">
+          <h3 className="card-title">Departamentos e KPIs</h3>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Departamento</th>
+                  <th>Responsável</th>
+                  <th className="num">KPIs</th>
+                  <th className="num">Objetivos</th>
+                  <th className="num">Entrega</th>
+                  <th className="num">Nota própria</th>
+                  <th className="num">Consolidada</th>
+                  <th>Situação</th>
+                  <th className="num">KPIs críticos</th>
+                  <th className="num">Tarefas atrasadas</th>
+                </tr>
+              </thead>
+              <tbody>
+                {departmentTree(data.departments).map(({ department: d, depth }) => (
+                  <tr key={d.id}>
+                    <td style={{ paddingLeft: `${0.7 + depth * 1.2}rem` }}>
+                      <strong>{d.code}</strong> <span className="hint">{d.name}</span>
+                    </td>
+                    <td>{d.head?.fullName ?? <span className="hint">—</span>}</td>
+                    <td className="num">{fmt(d.scorecard.kpiScore)}</td>
+                    <td className="num">{fmt(d.scorecard.objectiveScore)}</td>
+                    <td className="num">{fmt(d.scorecard.deliveryScore)}</td>
+                    <td className="num">
+                      <ScoreValue score={d.scorecard.score} health={d.scorecard.health} />
+                    </td>
+                    <td className="num">
+                      <ScoreValue score={d.consolidatedScore} health={d.consolidatedHealth} />
+                    </td>
+                    <td>
+                      <HealthBadge health={d.consolidatedHealth} />
+                    </td>
+                    <td className="num">{d.scorecard.kpisRed || "-"}</td>
+                    <td className="num">{d.scorecard.overdueTasks || "-"}</td>
+                  </tr>
+                ))}
+                {data.departments.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="hint">
+                      Nenhum departamento cadastrado. Comece em <Link to="/performance/equipa">Equipa</Link>.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {data.leaders.length > 0 && (
+        <div className="card">
+          <h3 className="card-title">Gestores e coordenadores</h3>
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Nome</th>
+                  <th>Cargo</th>
+                  <th>Departamento</th>
+                  <th className="num">KPIs</th>
+                  <th className="num">Objetivos</th>
+                  <th className="num">Entrega</th>
+                  <th className="num">Nota</th>
+                  <th>Situação</th>
+                  <th className="num">Tarefas abertas</th>
+                  <th className="num">Em atraso</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.leaders.map((p, i) => (
+                  <tr key={p.id}>
+                    <td className="hint">{i + 1}</td>
+                    <td>{p.fullName}</td>
+                    <td>{ROLE_LABEL[p.role]}</td>
+                    <td>{p.department?.code ?? "-"}</td>
+                    <td className="num">{fmt(p.scorecard?.kpiScore)}</td>
+                    <td className="num">{fmt(p.scorecard?.objectiveScore)}</td>
+                    <td className="num">{fmt(p.scorecard?.deliveryScore)}</td>
+                    <td className="num">
+                      <ScoreValue score={p.scorecard?.score ?? null} health={p.scorecard?.health ?? "NO_DATA"} />
+                    </td>
+                    <td>
+                      <HealthBadge health={p.scorecard?.health ?? "NO_DATA"} />
+                    </td>
+                    <td className="num">{p.scorecard?.openTasks ?? 0}</td>
+                    <td className={`num ${p.scorecard?.overdueTasks ? "health-text-RED" : ""}`}>
+                      {p.scorecard?.overdueTasks || "-"}
+                    </td>
+                  </tr>
+                ))}
+                {data.leaders.length === 0 && (
+                  <tr>
+                    <td colSpan={11} className="hint">
+                      Nenhum diretor, gestor ou coordenador cadastrado.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <p className="hint">
+            Nota = 50% atingimento dos KPIs (ponderado pelo peso, máx. 120%) + 20% ritmo dos objetivos (progresso face
+            ao tempo decorrido) + 30% entrega de tarefas nos últimos 90 dias (no prazo = 100, com atraso = 50, em atraso
+            = 0). Sem um dos componentes, os outros são reponderados. Verde ≥ 90, amarelo ≥ 70, vermelho abaixo de 70.
+          </p>
+        </div>
+      )}
 
       <div className="card">
         <div className="page-header" style={{ marginBottom: "0.6rem" }}>

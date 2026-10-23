@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError } from "../../api";
+import { useAuth } from "../../auth/context";
 import { perfApi } from "../../performance/api";
 import { AlertList } from "../../performance/AlertList";
 import { useCurrentPersonId } from "../../performance/hooks";
@@ -8,6 +9,7 @@ import type { Alert, AlertSeverity } from "../../performance/types";
 export function Alerts() {
   const [alerts, setAlerts] = useState<Alert[] | null>(null);
   const [me] = useCurrentPersonId();
+  const { user } = useAuth();
   const [onlyMine, setOnlyMine] = useState(false);
   const [severity, setSeverity] = useState<AlertSeverity | "">("");
   const [permission, setPermission] = useState(() => ("Notification" in window ? Notification.permission : "denied"));
@@ -46,9 +48,11 @@ export function Alerts() {
               {permission === "denied" ? "Notificações bloqueadas no navegador" : "Ativar notificações no navegador"}
             </button>
           )}
-          <button className="btn secondary" onClick={sendToWebhook}>
-            Enviar novos para Teams/Slack
-          </button>
+          {user?.isAdmin && (
+            <button className="btn secondary" onClick={sendToWebhook}>
+              Enviar novos para Teams/Slack
+            </button>
+          )}
         </div>
       </div>
 
@@ -71,16 +75,16 @@ export function Alerts() {
             ))}
           </div>
           <label className="inline-label">
-            <input type="checkbox" checked={onlyMine} disabled={!me} onChange={(e) => setOnlyMine(e.target.checked)} />
-            Só os meus {!me && <span className="hint">(escolha “Eu sou” no topo)</span>}
+            <input type="checkbox" checked={onlyMine} onChange={(e) => setOnlyMine(e.target.checked)} />
+            Só os meus
           </label>
         </div>
         <AlertList alerts={visible} />
       </div>
 
       <p className="hint">
-        Os alertas são recalculados a cada consulta: tarefas e projetos em atraso, com prazo a terminar ou com progresso
-        abaixo do tempo consumido; KPIs abaixo da meta ou sem medição do último período. Com o painel aberto, os alertas
+        Os alertas são recalculados a cada consulta: tarefas, projetos e objetivos em atraso, com prazo a terminar ou com
+        progresso abaixo do tempo consumido; KPIs abaixo da meta ou sem medição do último período. Com o painel aberto, os alertas
         críticos novos aparecem como notificação do navegador.
       </p>
     </div>

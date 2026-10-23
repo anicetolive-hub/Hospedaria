@@ -27,7 +27,9 @@ npm run dev                # inicia a API em http://localhost:3333
 ```
 
 Para carregar dados de exemplo do módulo de performance (uma Direção de SI
-com áreas, gestores, KPIs e projetos): `npm run seed:performance`.
+com áreas, gestores, KPIs, objetivos e projetos): `npm run seed:performance`.
+Entre com `diretor.si@exemplo.ao` / `Mudar@2026` (administrador); as outras
+pessoas de exemplo usam a mesma password. Troque-a em produção.
 
 Rodar os testes: `npm test` (cobre o algoritmo de assinatura da Tuya e o
 motor de cálculo de performance/alertas).
@@ -91,6 +93,27 @@ com renovação automática, e comandos enviados via
   (`BOOKED` → `CHECKED_IN` → `CHECKED_OUT`, ou `CANCELLED`) + último
   resultado da automação Tuya, para auditoria.
 
+## Login e permissões
+
+A aplicação inteira exige login (email + password). No **primeiro acesso**,
+sem nenhum administrador criado, o ecrã de login pede para criar a conta de
+administrador. Depois disso, o administrador dá acesso às restantes pessoas em
+**Performance → Equipa** (email + password inicial, ou "Dar acesso" /
+"Redefinir password") e cada um troca a sua password no menu com o seu nome,
+no canto superior direito.
+
+- Passwords guardadas com hash `scrypt` (nunca em texto); mínimo de 8 caracteres.
+- Sessões com token aleatório guardado apenas como hash; duram
+  `SESSION_TTL_HOURS` (padrão 12 h) e terminam ao sair, ao trocar a password
+  ou quando o administrador desativa a pessoa.
+- Após 5 tentativas falhadas, o email fica bloqueado 15 minutos.
+
+| Perfil | Vê | Pode alterar |
+| --- | --- | --- |
+| **Administrador** | Tudo | Tudo: estrutura, pessoas e acessos, KPIs, objetivos estratégicos |
+| **Diretor / Gestor / Coordenador** | O seu departamento e as áreas abaixo dele, mais os objetivos estratégicos | Tarefas e objetivos individuais da sua equipa, objetivos de direção do seu departamento, valores dos KPIs da equipa, projetos que gere |
+| **Colaborador** | O que é seu, mais os objetivos estratégicos | As suas tarefas, os seus objetivos individuais e os valores dos KPIs de que é responsável |
+
 ## Módulo de Gestão de Performance
 
 Painel para a direção acompanhar a performance dos **departamentos**, dos
@@ -100,15 +123,26 @@ gerir **projetos e tarefas** com alertas de prazo. Fica no menu
 
 | Página | Para que serve |
 | --- | --- |
-| **Visão geral** | Nota consolidada da direção, ranking dos departamentos e dos gestores/coordenadores, e os alertas prioritários. |
+| **Visão geral** | A minha nota, objetivos estratégicos, nota consolidada da direção, ranking dos departamentos e dos gestores/coordenadores, e os alertas prioritários. |
+| **Objetivos** | Objetivos em cascata: **estratégicos** (organização) → **de direção** (departamento) → **individuais** (pessoa), com progresso, ritmo e situação de prazo. |
 | **KPIs** | Cadastro de KPIs por departamento e responsável (meta, sentido, frequência, peso) e registo dos valores de cada período, com histórico e tendência. |
 | **Projetos e tarefas** | Projetos com progresso e situação de prazo; tarefas com responsável, prazo e progresso. Filtros "As minhas", "Abertas" e "Atrasadas / em risco". |
 | **Equipa** | Estrutura de departamentos (a direção no topo e as áreas por baixo) e pessoas com o seu nível: diretor, gestor, coordenador ou colaborador. |
 | **Alertas** | Todos os alertas ativos, com filtro por severidade e "só os meus". |
 
-No topo de todas as páginas, o seletor **"Eu sou"** indica quem está a usar
-o painel (fica guardado no navegador) e o sino mostra os alertas críticos /
-de atenção dessa pessoa.
+No topo de todas as páginas, o sino mostra os alertas críticos / de atenção
+visíveis para quem tem a sessão iniciada.
+
+### Objetivos
+
+Cada objetivo de direção contribui para um estratégico e cada individual para
+um de direção. KPIs e projetos podem ser ligados a um objetivo (nos
+formulários de KPIs e de projetos). O **progresso** de um objetivo é a média
+ponderada do que está ligado a ele: atingimento dos KPIs (máx. 100%),
+progresso dos projetos e progresso dos objetivos filhos (pelo peso de cada
+um). Sem nada ligado, o responsável atualiza o progresso à mão. O **ritmo**
+compara o progresso com o tempo já decorrido (ex.: 30% feito com 60% do
+prazo consumido = ritmo 50) e só é avaliado depois de passados 10% do prazo.
 
 ### Como as notas são calculadas
 
@@ -119,10 +153,13 @@ de atenção dessa pessoa.
   seus KPIs, ponderada pelo peso de cada um (usa a medição mais recente).
 - **Nota de entrega** = tarefas com prazo nos últimos 90 dias: no prazo
   vale 100, entregue com atraso 50, em atraso (aberta e vencida) 0.
-- **Nota final** = 60% KPIs + 40% entrega (se faltar um dos lados, usa só o
-  outro). Verde ≥ 90, amarelo ≥ 70, vermelho abaixo de 70.
-- **Departamento**: nota própria = KPIs do departamento + entrega das
-  tarefas da sua equipa; **nota consolidada** = média da nota própria com a
+- **Nota de objetivos** = média do ritmo dos objetivos de que a pessoa é
+  responsável, ponderada pelo peso.
+- **Nota final** = 50% KPIs + 20% objetivos + 30% entrega (se faltar um
+  componente, os restantes são reponderados). Verde ≥ 90, amarelo ≥ 70,
+  vermelho abaixo de 70.
+- **Departamento**: nota própria = KPIs e objetivos de direção do
+  departamento + entrega das tarefas da sua equipa; **nota consolidada** = média da nota própria com a
   consolidada de cada área subordinada. A nota consolidada do departamento
   de topo é a nota da direção.
 
@@ -134,7 +171,7 @@ Recalculados a cada consulta:
 
 | Alerta | Severidade |
 | --- | --- |
-| Tarefa ou projeto com prazo ultrapassado | Crítico |
+| Tarefa, projeto ou objetivo com prazo ultrapassado | Crítico |
 | KPI abaixo do limiar crítico | Crítico |
 | Prazo termina em `ALERT_DUE_SOON_DAYS` dias ou menos (padrão 3) | Atenção |
 | Em risco: bloqueado/em espera, ou mais de metade do prazo consumido com o progresso 25 pontos atrás do tempo | Atenção |
@@ -157,8 +194,10 @@ Formas de receber os alertas:
 
 ### API
 
-Todas as rotas ficam em `/api/performance`: `dashboard`, `alerts`,
-`departments`, `people`, `kpis` (+ `POST /kpis/:id/measurements` com
+Login em `/api/auth` (`status`, `setup`, `login`, `logout`, `me`,
+`change-password`); as restantes rotas exigem o cabeçalho
+`Authorization: Bearer <token>`. As do módulo ficam em `/api/performance`:
+`dashboard`, `alerts`, `departments`, `people`, `objectives`, `kpis` (+ `POST /kpis/:id/measurements` com
 `{ period, value }`; períodos `2026-10`, `2026-Q4`, `2026-W43` ou `2026`),
 `projects` e `tasks` (CRUD com GET/POST/PUT/DELETE). Ao mudar uma tarefa
 para concluída, a data de conclusão é registada automaticamente; é essa data
