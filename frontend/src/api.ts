@@ -36,6 +36,8 @@ export function setToken(token: string | null): void {
 
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getToken();
+  // Comparação literal (e não a constante DEMO) para o build normal eliminar o código da demonstração
+  if (import.meta.env.VITE_DEMO === "true") return demoRequest<T>(path, token, init);
   const response = await fetch(`${BASE_URL}${path}`, {
     ...init,
     headers: {
@@ -99,3 +101,20 @@ export const api = {
     status: () => request<{ connected: boolean; error?: string }>("/api/tuya/status"),
   },
 };
+
+/** Na demonstração, as chamadas são respondidas no navegador (ver demo/mockApi.ts). */
+async function demoRequest<T>(path: string, token: string | null, init?: RequestInit): Promise<T> {
+  const { mockRequest } = await import("./demo/mockApi");
+  try {
+    return await mockRequest<T>(path, {
+      ...init,
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(init?.headers as Record<string, string>) },
+    });
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 401 && token) {
+      setToken(null);
+      window.dispatchEvent(new Event("auth-expired"));
+    }
+    throw err;
+  }
+}

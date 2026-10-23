@@ -1,9 +1,23 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { ApiError, request } from "../api";
+
+// Só existe no build de demonstração (comparação literal para o build normal o eliminar)
+const DemoLogin =
+  import.meta.env.VITE_DEMO === "true" ? lazy(() => import("../demo/DemoLogin").then((m) => ({ default: m.DemoLogin }))) : null;
 import { useAuth } from "./context";
 
 /** Ecrã de entrada. Se ainda não existir administrador, pede para criar o primeiro. */
 export function LoginPage() {
+  return DemoLogin ? (
+    <Suspense fallback={null}>
+      <DemoLogin />
+    </Suspense>
+  ) : (
+    <CredentialsLogin />
+  );
+}
+
+function CredentialsLogin() {
   const { login, setup } = useAuth();
   const [setupRequired, setSetupRequired] = useState<boolean | null>(null);
   const [fullName, setFullName] = useState("");

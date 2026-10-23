@@ -1,10 +1,16 @@
-import type { AuthUser } from "../../middleware/auth";
-
 // Regras de visibilidade e permissão do módulo de performance:
 // - administrador: vê e gere tudo;
 // - diretor/gestor/coordenador: vê e gere o seu departamento e as áreas
 //   subordinadas (pessoas, tarefas, medições de KPIs, objetivos);
 // - colaborador: vê e gere apenas o que é seu.
+
+/** Dados do utilizador de que as regras precisam (compatível com AuthUser). */
+export interface ScopeUser {
+  id: string;
+  role: string;
+  departmentId: string | null;
+  isAdmin: boolean;
+}
 
 export const LEADER_ROLES = new Set(["DIRECTOR", "MANAGER", "COORDINATOR"]);
 
@@ -15,7 +21,7 @@ export interface Scope {
 }
 
 export function buildScope(
-  user: AuthUser,
+  user: ScopeUser,
   departments: { id: string; parentId: string | null }[],
   people: { id: string; departmentId: string | null }[],
 ): Scope {

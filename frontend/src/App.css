@@ -87,7 +87,7 @@
 
 .card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   gap: 1rem;
 }
 
@@ -457,9 +457,48 @@ tr.row-detail td {
 }
 
 @media (max-width: 720px) {
-  .app-header,
-  .app-content {
-    padding: 0.9rem 1rem;
+  /* Telemóvel: título e conta na 1.ª linha, menu numa faixa que desliza na horizontal */
+  .app-header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.6rem;
+    padding: 0.7rem 0 0;
+  }
+
+  .app-header h1 {
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    font-size: 1.05rem;
+  }
+
+  .toolbar {
+    grid-column: 2;
+    grid-row: 1;
+    margin-left: 0;
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    gap: 0.6rem;
+  }
+
+  .app-header nav {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 1.2rem;
+    padding: 0 max(16px, env(safe-area-inset-right, 0px)) 0.2rem max(16px, env(safe-area-inset-left, 0px));
+    scrollbar-width: none;
+  }
+
+  .app-header nav::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nav-group {
+    flex-wrap: nowrap;
+  }
+
+  .nav-group a {
+    white-space: nowrap;
+    padding: 0.5rem 0;
   }
 
   .nav-group + .nav-group {
@@ -467,8 +506,103 @@ tr.row-detail td {
     border-left: none;
   }
 
-  .toolbar {
-    margin-left: 0;
+  .app-content {
+    padding: 1rem max(16px, env(safe-area-inset-right, 0px)) 1.5rem max(16px, env(safe-area-inset-left, 0px));
+  }
+
+  .page-header {
+    flex-wrap: wrap;
+    gap: 0.6rem;
+  }
+
+  .stat .value {
+    font-size: 1.5rem;
+  }
+
+  .account-button strong {
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .account-panel {
+    width: min(260px, calc(100vw - 32px));
+  }
+
+  .card {
+    padding: 0.9rem;
+  }
+
+  .inline-form > * {
+    flex: 1 1 140px;
+  }
+
+  /* Tabelas viram cartões: cada linha um bloco, cada célula "coluna: valor" */
+  .table-scroll table,
+  .table-scroll tbody,
+  .table-scroll tr,
+  .table-scroll td {
+    display: block;
+    width: 100%;
+  }
+
+  .table-scroll thead {
+    display: none;
+  }
+
+  .table-scroll tr {
+    padding: 0.7rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .table-scroll td {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.8rem;
+    min-height: 1.9rem;
+    padding: 0.15rem 0;
+    border: none;
+    text-align: right;
+  }
+
+  .table-scroll td::before {
+    content: attr(data-label);
+    flex: none;
+    max-width: 45%;
+    color: var(--muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    text-align: left;
+  }
+
+  /* A 1.ª coluna é o título do cartão; células sem nome de coluna ocupam a linha toda */
+  .table-scroll td:first-child,
+  .table-scroll td[data-label=""] {
+    display: block;
+    text-align: left;
+  }
+
+  .table-scroll td:first-child {
+    padding-bottom: 0.35rem;
+    font-size: 0.98rem;
+  }
+
+  .table-scroll td:first-child::before,
+  .table-scroll td[data-label=""]::before {
+    content: none;
+  }
+
+  .table-scroll td > select,
+  .table-scroll td > input[type="date"] {
+    max-width: 55%;
+  }
+
+  .table-scroll td .progress {
+    width: 120px;
   }
 }
 
@@ -580,4 +714,43 @@ tr.row-detail td {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+}
+
+/* ---- Demonstração ---- */
+
+.demo-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem 1rem;
+  padding: 0.45rem max(16px, env(safe-area-inset-right, 0px)) 0.45rem max(16px, env(safe-area-inset-left, 0px));
+  background: rgba(56, 189, 248, 0.12);
+  border-bottom: 1px solid var(--border);
+  font-size: 0.8rem;
+}
+
+.demo-accounts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.demo-account {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.15rem;
+  padding: 0.7rem 0.9rem;
+  text-align: left;
+  color: var(--text);
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.92rem;
+}
+
+.demo-account:hover,
+.demo-account:focus-visible {
+  border-color: var(--accent);
 }

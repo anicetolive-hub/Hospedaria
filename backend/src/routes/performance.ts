@@ -8,7 +8,8 @@ import { buildScope, canManageDepartment, canManagePerson, LEADER_ROLES, Scope }
 import { hashPassword, MIN_PASSWORD_LENGTH } from "../services/auth/password";
 import { notifyNewAlerts } from "../services/performance/alertNotifier";
 import { periodOf } from "../services/performance/engine";
-import { isOpen, loadSnapshot, Snapshot } from "../services/performance/snapshot";
+import { isOpen, loadSnapshot } from "../services/performance/snapshot";
+import { filterSnapshot } from "../services/performance/visibility";
 
 // Todas as rotas exigem login (ver index.ts). Leituras são filtradas pelo
 // âmbito do utilizador; escritas verificam a permissão sobre o registo.
@@ -28,52 +29,11 @@ async function scopeFor(req: Request): Promise<Scope> {
   return buildScope(req.user!, departments, people);
 }
 
-/** Snapshot completo + o recorte visível para o utilizador autenticado. */
+/** Snapshot completo filtrado pelo âmbito do utilizador autenticado. */
 async function visibleSnapshot(req: Request) {
   const snap = await loadSnapshot();
   const scope = buildScope(req.user!, snap.departments, snap.people);
-  if (scope.all) return { snap, scope };
-
-  const seesPerson = (id: string | null | undefined) => !!id && scope.personIds.has(id);
-  const seesDepartment = (id: string | null | undefined) => !!id && scope.departmentIds.has(id);
-
-  // Projetos do âmbito mostram todas as tarefas; nos restantes projetos onde a
-  // pessoa tem tarefas, vê o projeto mas só as tarefas do seu âmbito.
-  const managedProjectIds = new Set(
-    snap.projects.filter((p) => seesPerson(p.ownerId) || seesDepartment(p.departmentId)).map((p) => p.id),
-  );
-  const tasks = snap.tasks.filter(
-    (t) => seesPerson(t.assigneeId) || (t.projectId !== null && managedProjectIds.has(t.projectId)),
-  );
-  const projectIds = new Set([...managedProjectIds, ...tasks.map((t) => t.projectId).filter((id): id is string => !!id)]);
-
-  // Objetivos estratégicos são públicos para toda a organização; os de direção e
-  // individuais seguem o âmbito, mais os "pais" dos visíveis (para ver o alinhamento).
-  const objectiveIds = new Set(
-    snap.objectives
-      .filter((o) => o.level === "STRATEGIC" || seesPerson(o.ownerId) || seesDepartment(o.departmentId))
-      .map((o) => o.id),
-  );
-  const byId = new Map(snap.objectives.map((o) => [o.id, o]));
-  for (const id of [...objectiveIds]) {
-    let parentId = byId.get(id)?.parentId;
-    while (parentId && !objectiveIds.has(parentId)) {
-      objectiveIds.add(parentId);
-      parentId = byId.get(parentId)?.parentId;
-    }
-  }
-
-  const visible: Snapshot = {
-    ...snap,
-    departments: snap.departments.filter((d) => seesDepartment(d.id)),
-    people: snap.people.filter((p) => seesPerson(p.id)),
-    kpis: snap.kpis.filter((k) => seesPerson(k.ownerId) || seesDepartment(k.departmentId)),
-    projects: snap.projects.filter((p) => projectIds.has(p.id)),
-    tasks,
-    objectives: snap.objectives.filter((o) => objectiveIds.has(o.id)),
-    alerts: snap.alerts.filter((a) => seesPerson(a.ownerId)),
-  };
-  return { snap: visible, scope };
+  return { snap: filterSnapshot(snap, scope), scope };
 }
 
 // ---------------------------------------------------------------------------
